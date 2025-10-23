@@ -63,8 +63,8 @@ class CharTokenizer:
     def __init__(self):
         self.pad_token = '<PAD>'
         self.pad_id = 0
-        # NEW: Added scratchpad characters
-        chars = list("0123456789+-*/= \n[];:FPCWKB")
+        # NEW: Added scratchpad characters (including '>' for borrow notation)
+        chars = list("0123456789+-*/= \n[];:FPCWKB>")
         # Reserve 0 for PAD, others start from 1
         self.itos = [self.pad_token] + chars
         self.stoi = {ch: i for i, ch in enumerate(self.itos)}
