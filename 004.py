@@ -690,7 +690,7 @@ def main():
     p_train.add_argument('--max-digits', type=int, default=3)
     p_train.add_argument('--lr', type=float, default=3e-4)
     p_train.add_argument('--n-embd', type=int, default=128)
-    p_train.add_argument('--n-layer', type=int, default=2)
+    p_train.add_argument('--n-layer', type=int, default=4)
     p_train.add_argument('--n-head', type=int, default=4)
     p_train.add_argument('--dropout', type=float, default=0.1)
     p_train.add_argument('--device', type=str, default='auto', choices=['cpu', 'cuda', 'mps', 'auto'])
@@ -698,7 +698,7 @@ def main():
     p_train.add_argument('--log-every', type=int, default=100)
     p_train.add_argument('--eval-samples', type=int, default=5000, help='Number of synthetic test samples to evaluate at end of training (0 to skip)')
     p_train.add_argument('--ops', type=str, default='+-*/', help="String of operators to train on, e.g., '+-*/'")
-    p_train.add_argument('--op-probs', type=str, default='0.05,0.15,0.55,0.25', help="Comma-separated probabilities aligned with --ops (default biases: +:0.05, -:0.15, *:0.55, /:0.25). Example override: '0.1,0.1,0.7,0.1'")
+    p_train.add_argument('--op-probs', type=str, default='0.03,0.07,0.80,0.10', help="Comma-separated probabilities aligned with --ops (default biases: +:0.03, -:0.07, *:0.80, /:0.10). Example override: '0.1,0.1,0.7,0.1'")
 
     p_demo = sub.add_parser('demo', help='Run generation on a prompt like "12+3=" (loads checkpoint if provided)')
     p_demo.add_argument('--prompt', type=str, required=True, help='Prompt such as "12+3=" or "144/12="')
