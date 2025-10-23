@@ -784,33 +784,26 @@ def train(
                         print("  --- Log legend ---")
                         print("  [IN]  input prompt given to the model")
                         print("  [OUT] model's generated scratchpad/text in response to [IN]")
-                        print("  [GT]  a ground-truth training example (what the model is trained to produce)")
-                        print("  [CHK] a quick check comparing ground-truth result vs the F: extracted from [GT]")
+                        print("  [GT]  ground-truth scratchpad for the [IN] prompt (what model should produce)")
                         _printed_log_legend = True
 
-                    print(f"  [IN]   Prompt to model: {prompt!r}\n  [OUT]  Model output (generated scratchpad): {out!r}")
-                    # Also show one training sample (ground truth scratchpad) for inspection
-                    sample_text = generate_scratchpad_sample(cfg).strip()
-                    # Try to extract operands/op and the final result from the sample
-                    m = re.match(r"^\s*(\d+)([+\-*/])(\d+)=", sample_text)
+                    print(f"  [IN]  {prompt!r}")
+                    print(f"  [OUT] {out!r}")
+                    # Generate ground truth for the same prompt
+                    m = re.match(r"^\s*(\d+)([+\-*/])(\d+)=", prompt)
                     if m:
-                        a_s, op_s, b_s = m.group(1), m.group(2), m.group(3)
-                        try:
-                            a_i, b_i = int(a_s), int(b_s)
-                            expected = str(_ground_truth(a_i, b_i, op_s))
-                        except Exception:
-                            expected = "?"
-                    else:
-                        a_s = b_s = op_s = None
-                        expected = "?"
-                    f_val = _extract_result_from_text(sample_text)
-                    ok = (expected != "?" and f_val == expected)
-                    if a_s is not None:
-                        print(f"  [GT]   {sample_text!r}")
-                        print(f"  [CHK]  {a_s}{op_s}{b_s} = {expected} | extracted F:{f_val} | match={ok}")
-                    else:
-                        print(f"  [GT]   {sample_text!r}")
-                        print(f"  [CHK]  (could not parse operands) | extracted F:{f_val}")
+                        a_i, b_i, op_s = int(m.group(1)), int(m.group(3)), m.group(2)
+                        if op_s == '+':
+                            gt_text = _make_add_scratchpad(a_i, b_i, cfg.max_digits).strip()
+                        elif op_s == '-':
+                            gt_text = _make_sub_scratchpad(a_i, b_i, cfg.max_digits).strip()
+                        elif op_s == '*':
+                            gt_text = _make_mul_scratchpad(a_i, b_i).strip()
+                        elif op_s == '/':
+                            gt_text = _make_div_scratchpad(a_i, b_i).strip()
+                        else:
+                            gt_text = "(unknown operator)"
+                        print(f"  [GT]  {gt_text!r}")
 
     # Save checkpoint
     torch.save({
