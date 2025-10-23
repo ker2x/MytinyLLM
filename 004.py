@@ -77,6 +77,9 @@ class CharTokenizer:
 class GenConfig:
     max_digits: int = 3
     ops: str = "+-*/"
+    # Optional per-operator sampling probabilities aligned with `ops`.
+    # If None or invalid, operators are sampled uniformly.
+    op_probs: List[float] | None = None
 
 
 def _rand_int(max_digits: int) -> int:
@@ -86,23 +89,43 @@ def _rand_int(max_digits: int) -> int:
 
 
 def _make_div_pair(max_digits: int) -> Tuple[int, int]:
-    # Ensure integer division with no remainder and no division by zero.
-    b = 0
-    while b == 0:
-        b = _rand_int(max_digits)
-    # sample quotient and compute a = b * q
-    q = _rand_int(max_digits)
+    # Ensure integer division with no remainder and non-trivial quotient.
+    # Draw divisor b in [1, 10^max_digits - 1] (non-zero).
+    hi = 10 ** max_digits - 1
+    b = random.randint(1, hi)
+    # Choose quotient q to avoid trivial zeros and keep result length challenging.
+    # Prefer max_digits-digit quotients to balance result length across ops.
+    lo_q = 1 if max_digits == 1 else 10 ** (max_digits - 1)
+    q = random.randint(lo_q, hi)
     a = b * q
     return a, b
 
 
 def _make_sub_pair(max_digits: int) -> Tuple[int, int]:
-    # To avoid negative results too often, swap if needed.
+    # Allow negative results ~40% of the time for variety
     a = _rand_int(max_digits)
     b = _rand_int(max_digits)
-    if a < b:
+    # 60% chance: ensure non-negative by swapping if needed
+    if random.random() > 0.4 and a < b:
         a, b = b, a
     return a, b
+
+
+def _choose_op(cfg: GenConfig) -> str:
+    """Choose an operator, optionally using configured probabilities."""
+    ops = list(cfg.ops)
+    weights = None
+    if cfg.op_probs is not None:
+        # accept length match only, clip negatives to zero, use as weights
+        if len(cfg.op_probs) == len(ops):
+            weights = [max(0.0, float(w)) for w in cfg.op_probs]
+            if sum(weights) <= 0:
+                weights = None
+        # if length mismatch, fall back to uniform
+    if weights is None:
+        return random.choice(ops)
+    # random.choices returns a list
+    return random.choices(ops, weights=weights, k=1)[0]
 
 
 def generate_sample(cfg: GenConfig) -> str:
@@ -112,7 +135,7 @@ def generate_sample(cfg: GenConfig) -> str:
     "a<op>b=result\n" — e.g., "12+3=15\n". Division is guaranteed to have
     an exact integer result and no divide-by-zero.
     """
-    op = random.choice(cfg.ops)
+    op = _choose_op(cfg)
     if op == '+':
         a, b = _rand_int(cfg.max_digits), _rand_int(cfg.max_digits)
         res = a + b
@@ -359,6 +382,73 @@ def print_startup_info(cmd: str, requested_device: str, picked_device: torch.dev
         print(f"checkpoint: {checkpoint}")
     print("====================")
 
+
+def _count_parameters(model: nn.Module) -> tuple[int, int]:
+    """Return (total_params, trainable_params)."""
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return total, trainable
+
+
+def _format_num(n: int) -> str:
+    # Format large integers with K/M/B suffix for readability
+    if n >= 1_000_000_000:
+        return f"{n/1_000_000_000:.2f}B"
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.2f}M"
+    if n >= 1_000:
+        return f"{n/1_000:.2f}K"
+    return str(n)
+
+
+def print_model_summary(model: nn.Module):
+    """Print a lightweight summary of the TinyGPT model architecture and params.
+
+    Safe to call right after model construction or loading.
+    """
+    name = model.__class__.__name__
+    # Try to infer config fields from the TinyGPT structure
+    try:
+        vocab_size = getattr(model, 'vocab_size', None)
+        n_embd = getattr(model.tok_emb, 'embedding_dim', None)
+        n_layer = len(getattr(model, 'blocks', []))
+        n_head = None
+        if n_layer > 0 and hasattr(model.blocks[0], 'attn') and hasattr(model.blocks[0].attn, 'n_heads'):
+            n_head = model.blocks[0].attn.n_heads
+        dropout = None
+        if hasattr(model, 'drop') and hasattr(model.drop, 'p'):
+            dropout = model.drop.p
+        max_pos = getattr(model.pos_emb, 'num_embeddings', None)
+    except Exception:
+        vocab_size = n_embd = n_layer = n_head = dropout = max_pos = None
+
+    total, trainable = _count_parameters(model)
+    # Approximate memory assuming parameter dtype of the first parameter
+    try:
+        first_param = next(model.parameters())
+        bytes_per_param = torch.finfo(first_param.dtype).bits // 8
+    except Exception:
+        bytes_per_param = 4  # default to float32
+    approx_mb = (total * bytes_per_param) / (1024 * 1024)
+
+    print("=== Model Summary ===")
+    print(f"arch:       {name}")
+    if vocab_size is not None:
+        print(f"vocab_size: {vocab_size}")
+    if n_embd is not None:
+        print(f"n_embd:     {n_embd}")
+    if n_layer is not None:
+        print(f"n_layer:    {n_layer}")
+    if n_head is not None:
+        print(f"n_head:     {n_head}")
+    if dropout is not None:
+        print(f"dropout:    {dropout}")
+    if max_pos is not None:
+        print(f"max_pos:    {max_pos}")
+    print(f"params:     {total} ({_format_num(total)}) | trainable: {trainable} ({_format_num(trainable)})")
+    print(f"approx size: {approx_mb:.2f} MB (parameters)")
+    print("====================")
+
 # -----------------------------
 # Orchestration (train loop, CLI)
 # -----------------------------
@@ -376,6 +466,8 @@ def train(
     ckpt_path: str = 'math_llm_model.pt',
     log_every: int = 100,
     eval_samples: int = 10000,
+    ops: str = "+-*/",
+    op_probs: List[float] | None = None,
 ):
     """Train the model on synthetic arithmetic data and optionally evaluate.
 
@@ -406,10 +498,20 @@ def train(
 
     # Startup information for training
     print_startup_info(cmd='train', requested_device=device, picked_device=dev, checkpoint=ckpt_path)
+    # Print a brief model summary
+    print_model_summary(model)
 
     optim = torch.optim.AdamW(model.parameters(), lr=lr)
 
-    cfg = GenConfig(max_digits=max_digits)
+    cfg = GenConfig(max_digits=max_digits, ops=ops, op_probs=op_probs)
+    # Report sampling distribution
+    if cfg.op_probs is None or len(cfg.op_probs) != len(cfg.ops) or sum(max(0.0, float(w)) for w in cfg.op_probs or []) <= 0:
+        print(f"Op sampling: uniform over ops='{cfg.ops}'")
+    else:
+        w = [max(0.0, float(x)) for x in cfg.op_probs]
+        s = sum(w)
+        probs_str = ', '.join(f"{op}:{p:.3f}" for op, p in zip(cfg.ops, [x/s for x in w]))
+        print(f"Op sampling (normalized): {probs_str}")
 
     t0 = time.time()
     ema_loss = None
@@ -466,7 +568,7 @@ def train(
 
 def generate_sample_prompt(cfg: GenConfig) -> str:
     # Create a prompt without the result, e.g., "12+3="
-    op = random.choice(cfg.ops)
+    op = _choose_op(cfg)
     if op == '+':
         a, b = _rand_int(cfg.max_digits), _rand_int(cfg.max_digits)
     elif op == '-':
@@ -583,7 +685,7 @@ def main():
     sub = parser.add_subparsers(dest='cmd', required=True)
 
     p_train = sub.add_parser('train', help='Train the tiny arithmetic LLM on synthetic data')
-    p_train.add_argument('--steps', type=int, default=5000)
+    p_train.add_argument('--steps', type=int, default=10000)
     p_train.add_argument('--batch-size', type=int, default=256)
     p_train.add_argument('--max-digits', type=int, default=3)
     p_train.add_argument('--lr', type=float, default=3e-4)
@@ -594,7 +696,9 @@ def main():
     p_train.add_argument('--device', type=str, default='auto', choices=['cpu', 'cuda', 'mps', 'auto'])
     p_train.add_argument('--ckpt', type=str, default='math_llm_model.pt')
     p_train.add_argument('--log-every', type=int, default=100)
-    p_train.add_argument('--eval-samples', type=int, default=10000, help='Number of synthetic test samples to evaluate at end of training (0 to skip)')
+    p_train.add_argument('--eval-samples', type=int, default=5000, help='Number of synthetic test samples to evaluate at end of training (0 to skip)')
+    p_train.add_argument('--ops', type=str, default='+-*/', help="String of operators to train on, e.g., '+-*/'")
+    p_train.add_argument('--op-probs', type=str, default='0.05,0.15,0.55,0.25', help="Comma-separated probabilities aligned with --ops (default biases: +:0.05, -:0.15, *:0.55, /:0.25). Example override: '0.1,0.1,0.7,0.1'")
 
     p_demo = sub.add_parser('demo', help='Run generation on a prompt like "12+3=" (loads checkpoint if provided)')
     p_demo.add_argument('--prompt', type=str, required=True, help='Prompt such as "12+3=" or "144/12="')
@@ -605,6 +709,14 @@ def main():
     args = parser.parse_args()
 
     if args.cmd == 'train':
+        # Parse op probabilities if provided
+        probs_list = None
+        if args.op_probs is not None:
+            try:
+                probs_list = [float(x.strip()) for x in args.op_probs.split(',') if x.strip() != '']
+            except ValueError:
+                print(f"Warning: Could not parse --op-probs='{args.op_probs}'. Falling back to uniform sampling.")
+                probs_list = None
         train(
             steps=args.steps,
             batch_size=args.batch_size,
@@ -618,6 +730,8 @@ def main():
             ckpt_path=args.ckpt,
             log_every=args.log_every,
             eval_samples=args.eval_samples,
+            ops=args.ops,
+            op_probs=probs_list,
         )
     elif args.cmd == 'demo':
         DEFAULT_CKPT = 'math_llm_model.pt'
@@ -646,6 +760,8 @@ def main():
                 model = TinyGPT(tokenizer.vocab_size).to(dev)
                 ckpt_used = '(random init)'
         print_startup_info(cmd='demo', requested_device=args.device, picked_device=dev, checkpoint=ckpt_used or '(unknown)')
+        # Print a brief model summary
+        print_model_summary(model)
         out = generate(model, tokenizer, args.prompt, max_new_tokens=args.max_new_tokens, device=dev)
         print(out)
 
