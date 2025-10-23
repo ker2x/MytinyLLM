@@ -50,8 +50,9 @@ class CharTokenizer:
     - \n: newline
     - []: scratchpad start/end
     - ;: step separator
-    - :FPCWKB: scratchpad format markers:
+    - :FAPCWKB: scratchpad format markers:
         F = Final answer (e.g., F:132)
+        A = Sum of partial products in multiplication (e.g., A:26+130=156)
         P = Partial product in multiplication (e.g., P1:13*2=26)
         C = Column number in addition/subtraction (e.g., C1:5+7=12)
         W = Write digit to result (e.g., W:2)
@@ -64,7 +65,8 @@ class CharTokenizer:
         self.pad_token = '<PAD>'
         self.pad_id = 0
         # NEW: Added scratchpad characters (including '>' for borrow notation)
-        chars = list("0123456789+-*/= \n[];:FPCWKB>")
+        # NOTE: Include 'A' for the multiplication accumulator step (e.g., A:26+130=156)
+        chars = list("0123456789+-*/= \n[];:FAPCWKB>")
         # Reserve 0 for PAD, others start from 1
         self.itos = [self.pad_token] + chars
         self.stoi = {ch: i for i, ch in enumerate(self.itos)}
@@ -806,14 +808,19 @@ def train(
                         print(f"  [GT]  {gt_text!r}")
 
     # Save checkpoint
+    # Derive hyperparameters from the current model to ensure consistency on reload
+    model_n_embd = getattr(model.tok_emb, 'embedding_dim', n_embd)
+    model_n_layer = len(getattr(model, 'blocks', []))
+    model_n_head = getattr(model.blocks[0].attn, 'n_heads', n_head) if model_n_layer > 0 else n_head
+    model_dropout = getattr(model.drop, 'p', dropout)
     torch.save({
         'model_state_dict': model.state_dict(),
-        'vocab_size': tokenizer.vocab_size,
-        'n_embd': n_embd,
-        'n_layer': n_layer,
-        'n_head': n_head,
-        'dropout': dropout,
-        'max_pos': max_pos,
+        'vocab_size': getattr(model, 'vocab_size', tokenizer.vocab_size),
+        'n_embd': model_n_embd,
+        'n_layer': model_n_layer,
+        'n_head': model_n_head,
+        'dropout': model_dropout,
+        'max_pos': getattr(model, 'max_pos', max_pos),
     }, ckpt_path)
     print(f"Saved checkpoint to {ckpt_path}")
 
@@ -856,8 +863,10 @@ def load_model(ckpt_path: str, device: str = 'cpu') -> Tuple[TinyGPT, CharTokeni
     tokenizer = CharTokenizer()
     ckpt = torch.load(ckpt_path, map_location=dev)
 
-    # Get vocab_size from tokenizer, fall back to checkpoint
-    vocab_size = getattr(tokenizer, 'vocab_size', ckpt.get('vocab_size', 50))
+    # Prefer checkpoint's saved vocab_size to ensure shapes match; fall back to tokenizer size.
+    vocab_size = int(ckpt.get('vocab_size', getattr(tokenizer, 'vocab_size', 50)))
+    if vocab_size != tokenizer.vocab_size:
+        print(f"Warning: checkpoint vocab_size ({vocab_size}) != current tokenizer vocab_size ({tokenizer.vocab_size}). Using checkpoint vocab_size for model.")
 
     model = TinyGPT(
         vocab_size=vocab_size,
@@ -911,10 +920,10 @@ def _extract_result_from_text(text: str) -> str:
     We look for the pattern "F:..." where F = Final answer marker.
     Example: From "85+47=[C1:5+7=12;W:2;K:1;C2:8+4+1=13;W:13;F:132]" extracts "132"
     """
-    # Regex to find the last F:(-?\d+) pattern
-    match = re.search(r"F:(-?\d+)", text)
-    if match:
-        return match.group(1)
+    # Regex: capture the last occurrence of F:<int> (allow optional leading minus)
+    matches = re.findall(r"F:(-?\d+)", text)
+    if matches:
+        return matches[-1]
 
     # Fallback: if no "F:", try to find "...=...[...]\n"
     # and extract the ... part. This is for robustness.
@@ -983,7 +992,7 @@ def main():
     sub = parser.add_subparsers(dest='cmd', required=True)
 
     p_train = sub.add_parser('train', help='Train the tiny arithmetic LLM on synthetic data')
-    p_train.add_argument('--steps', type=int, default=10000)
+    p_train.add_argument('--steps', type=int, default=1000)
     p_train.add_argument('--batch-size', type=int, default=128,
                          help="Batch size. Longer sequences may need smaller batches.")
     p_train.add_argument('--max-digits', type=int, default=3,
@@ -996,7 +1005,7 @@ def main():
     p_train.add_argument('--device', type=str, default='auto', choices=['cpu', 'cuda', 'mps', 'auto'])
     p_train.add_argument('--ckpt', type=str, default='math_llm_scratchpad_model.pt', help="Checkpoint path")
     p_train.add_argument('--log-every', type=int, default=100)
-    p_train.add_argument('--eval-samples', type=int, default=500, help='Number of synthetic test samples (0 to skip)')
+    p_train.add_argument('--eval-samples', type=int, default=200, help='Number of synthetic test samples (0 to skip)')
     p_train.add_argument('--ops', type=str, default='+-*/')
     p_train.add_argument('--op-probs', type=str, default=None,
                          help="Comma-separated op probabilities. (No longer recommended, curriculum is better.)")
