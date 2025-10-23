@@ -50,23 +50,24 @@ class CharTokenizer:
     - \n: newline
     - []: scratchpad start/end
     - ;: step separator
-    - :FAPCWKB: scratchpad format markers:
+    - :FAPCWKBMR: scratchpad format markers:
         F = Final answer (e.g., F:132)
         A = Sum of partial products in multiplication (e.g., A:26+130=156)
-        P = Partial product in multiplication (e.g., P1:13*2=26)
+        P = Partial product in multiplication (e.g., P1:13*2)
         C = Column number in addition/subtraction (e.g., C1:5+7=12)
         W = Write digit to result (e.g., W:2)
         K = Carry value in addition (e.g., K:1)
         B = Borrow operation in subtraction (e.g., B:5->4)
+        M = Single-digit multiplication step (e.g., M1:3*2=6)
+        R = Result of partial product (e.g., R1:26)
     - <PAD>: padding
     """
 
     def __init__(self):
         self.pad_token = '<PAD>'
         self.pad_id = 0
-        # NEW: Added scratchpad characters (including '>' for borrow notation)
-        # NOTE: Include 'A' for the multiplication accumulator step (e.g., A:26+130=156)
-        chars = list("0123456789+-*/= \n[];:FAPCWKB>")
+        # NEW: Added M and R for detailed multiplication scratchpad
+        chars = list("0123456789+-*/= \n[];:FAPCWKBMR>")
         # Reserve 0 for PAD, others start from 1
         self.itos = [self.pad_token] + chars
         self.stoi = {ch: i for i, ch in enumerate(self.itos)}
@@ -264,11 +265,15 @@ def _make_sub_scratchpad(a: int, b: int, max_digits: int) -> str:
 
 
 def _make_mul_scratchpad(a: int, b: int) -> str:
-    """Generates a scratchpad for multiplication via partial products.
-    Example: 13*12=[P1:13*2=26;P2:13*10=130;A:26+130=156;F:156]
+    """Generates a scratchpad for multiplication via partial products with digit-by-digit breakdown.
+    Example: 13*12=[P1:13*2;D1:3*2=6;W:6;D2:1*2=2;W:2;R1:26;P2:13*10;D1:3*1=3;W:3;D2:1*1=1;W:1;R2:130;A:26+130=156;F:156]
 
     Scratchpad format:
-    - P{n}: Partial product n (e.g., P1:13*2=26 means first partial: 13 × 2)
+    - P{n}: Start partial product n (e.g., P1:13*2)
+    - D{n}: Single digit multiplication step (e.g., D1:3*2=6)
+    - W:{d}: Write digit to result
+    - K:{c}: Carry value
+    - R{n}: Result of partial product (e.g., R1:26)
     - A: Add all partial products together
     - F: Final answer
     """
@@ -278,24 +283,61 @@ def _make_mul_scratchpad(a: int, b: int) -> str:
     partials = []
 
     if a == 0 or b == 0:
-        # Make the zero-case explicit with a P step for consistency
         steps.append(f"P1:{a}*{b}=0")
-        partials.append(0)
-    else:
-        for i, digit in enumerate(reversed(b_s)):
-            if digit == '0':
-                continue  # Skip 0 partial product, simplifies scratchpad
+        steps.append(f"F:0")
+        return f"{a}*{b}=[{';'.join(steps)}]\n"
 
-            multiplier = int(digit) * (10 ** i)
-            partial_res = a * multiplier
-            steps.append(f"P{i + 1}:{a}*{multiplier}={partial_res}")
-            partials.append(partial_res)
+    # Process each digit of b from right to left
+    for b_idx, b_digit_ch in enumerate(reversed(b_s)):
+        b_digit = int(b_digit_ch)
+        if b_digit == 0:
+            continue  # Skip zero digits
 
+        multiplier = b_digit * (10 ** b_idx)
+
+        # Start this partial product
+        steps.append(f"P{b_idx + 1}:{a}*{multiplier}")
+
+        # Multiply a by the single digit b_digit, digit by digit with carries
+        a_s = str(a)
+        carry = 0
+        partial_result = ""
+
+        for a_pos, a_digit_ch in enumerate(reversed(a_s), start=1):
+            a_digit = int(a_digit_ch)
+            product = a_digit * b_digit + carry
+            digit_out = product % 10
+            new_carry = product // 10
+
+            # Show the single-digit multiplication step
+            base_product = a_digit * b_digit
+            if carry > 0:
+                steps.append(f"M{a_pos}:{a_digit}*{b_digit}+{carry}={product}")
+            else:
+                steps.append(f"M{a_pos}:{a_digit}*{b_digit}={base_product}")
+
+            steps.append(f"W:{digit_out}")
+            if new_carry > 0 and a_pos < len(a_s):
+                steps.append(f"K:{new_carry}")
+
+            partial_result = str(digit_out) + partial_result
+            carry = new_carry
+
+        # Write any remaining carry
+        if carry > 0:
+            steps.append(f"W:{carry}")
+            partial_result = str(carry) + partial_result
+
+        # Adjust for place value (multiply by 10^b_idx)
+        partial_value = int(partial_result) * (10 ** b_idx)
+        steps.append(f"R{b_idx + 1}:{partial_value}")
+        partials.append(partial_value)
+
+    # Add all partial products
     if len(partials) == 0:
-        # Should not happen, but keep a defensive fallback
         partials.append(0)
+
     if len(partials) == 1:
-        # Only one partial product (e.g., 123 * 20 or 123 * 2, or zero-case)
         steps.append(f"A:{partials[0]}={partials[0]}")
     else:
         sum_str = "+".join(map(str, partials))
@@ -1075,7 +1117,7 @@ def main():
                          help="*Final* max digits for curriculum (e.g., 3 means 1-digit, 2-digit, 3-digit stages)")
     p_train.add_argument('--lr', type=float, default=3e-4)
     p_train.add_argument('--n-embd', type=int, default=128)
-    p_train.add_argument('--n-layer', type=int, default=4, help="Number of transformer layers")
+    p_train.add_argument('--n-layer', type=int, default=6, help="Number of transformer layers")
     p_train.add_argument('--n-head', type=int, default=4)
     p_train.add_argument('--dropout', type=float, default=0.1)
     p_train.add_argument('--device', type=str, default='auto', choices=['cpu', 'cuda', 'mps', 'auto'])
