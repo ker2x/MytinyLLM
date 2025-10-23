@@ -1000,7 +1000,7 @@ def main():
     p_train.add_argument('--ops', type=str, default='+-*/')
     p_train.add_argument('--op-probs', type=str, default=None,
                          help="Comma-separated op probabilities. (No longer recommended, curriculum is better.)")
-    p_train.add_argument('--max-pos', type=int, default=512, help="Max sequence length for pos embeddings")
+    p_train.add_argument('--max-pos', type=int, default=1024, help="Max sequence length for pos embeddings")
 
     p_demo = sub.add_parser('demo', help='Run generation on a prompt like "12+3="')
     p_demo.add_argument('--prompt', type=str, required=True, help='Prompt such as "12+3=" or "144/12="')
