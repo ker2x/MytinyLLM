@@ -483,10 +483,11 @@ def make_batch(tokenizer: CharTokenizer, batch_size: int, cfg: GenConfig, device
     torch.Tensor, torch.Tensor]:
     """Create a training batch of token ids (inputs and next-token targets).
 
-    NEW: This function is simplified. It just calls `generate_scratchpad_sample`
-    `batch_size` times. The old `generate_augmented_samples` is removed.
+    Generates scratchpad samples with input inversion: for each problem, creates
+    both A op B and B op A (except division, which only generates A/B to maintain
+    integer division property).
 
-    NEW: Takes `max_pos` to warn about truncation.
+    Takes `max_pos` to warn about truncation.
     """
     samples: List[str] = []
     # NEW: For each generated (A, B), also include the reversed (B, A) to teach operand order.
