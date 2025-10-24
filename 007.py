@@ -116,20 +116,40 @@ def _make_div_pair(max_digits: int) -> Tuple[int, int]:
     """Generate operand pair (a, b) for integer division ensuring no remainder.
 
     Creates pairs where a = b * q, ensuring a/b produces an integer quotient.
+    Both dividend and divisor are constrained to have at most max_digits digits.
 
     Args:
-        max_digits: Maximum digits for operands
+        max_digits: Maximum digits for both dividend and divisor
 
     Returns:
-        Tuple (dividend, divisor) where dividend/divisor has no remainder
+        Tuple (dividend, divisor) where dividend/divisor has no remainder and both have ≤ max_digits
     """
     if max_digits == 0: return 0, 1  # Handle 0-digit case
-    hi = 10 ** max_digits - 1
+
+    hi = 10 ** max_digits - 1  # max value (e.g., 999 for max_digits=3)
+    lo = 10 ** (max_digits - 1) if max_digits > 1 else 0  # min value to maintain digit count
+
+    # Generate divisor within range
     b = random.randint(1, hi)  # divisor (non-zero)
-    # Choose quotient q to avoid trivial zeros and keep result length challenging.
-    lo_q = 0 if max_digits == 1 else 10 ** (max_digits - 1)
-    q = random.randint(lo_q, hi)  # quotient
-    a = b * q  # dividend = divisor * quotient
+
+    # Generate dividend within range [lo, hi]
+    a = random.randint(lo, hi)
+
+    # Ensure a is divisible by b by rounding down
+    # This ensures a/b produces an integer quotient
+    q = a // b  # quotient
+    if q == 0:
+        q = 1  # ensure at least quotient of 1
+    a = b * q  # reconstruct dividend to ensure divisibility
+
+    # Safety check: if a exceeds max_digits, scale down
+    if a > hi:
+        # Use a smaller quotient
+        q = hi // b
+        if q == 0:
+            q = 1
+        a = b * q
+
     return a, b
 
 
