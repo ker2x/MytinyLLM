@@ -449,6 +449,36 @@ def generate_scratchpad_sample(cfg: GenConfig) -> str:
     return text
 
 
+def generate_scratchpad_pair(cfg: GenConfig) -> tuple[str, str | None]:
+    """Generate a pair of scratchpad samples with operands in both orders.
+    Returns (A op B, B op A). For division, skips reversed to maintain integer division property.
+    """
+    op = _choose_op(cfg)
+    if op == '+':
+        a, b = _rand_int(cfg.max_digits), _rand_int(cfg.max_digits)
+        t1 = _make_add_scratchpad(a, b, cfg.max_digits)
+        t2 = _make_add_scratchpad(b, a, cfg.max_digits)
+        return t1, t2
+    elif op == '-':
+        a, b = _make_sub_pair(cfg.max_digits)
+        t1 = _make_sub_scratchpad(a, b, cfg.max_digits)
+        t2 = _make_sub_scratchpad(b, a, cfg.max_digits)
+        return t1, t2
+    elif op == '*':
+        a, b = _rand_int(cfg.max_digits), _rand_int(cfg.max_digits)
+        t1 = _make_mul_scratchpad(a, b)
+        t2 = _make_mul_scratchpad(b, a)
+        return t1, t2
+    elif op == '/':
+        a, b = _make_div_pair(cfg.max_digits)
+        t1 = _make_div_scratchpad(a, b)
+        # Skip reversal for division to maintain integer division property
+        t2 = None
+        return t1, t2
+    else:
+        raise ValueError(f"Unknown operator: {op}")
+
+
 def make_batch(tokenizer: CharTokenizer, batch_size: int, cfg: GenConfig, device: torch.device, max_pos: int) -> Tuple[
     torch.Tensor, torch.Tensor]:
     """Create a training batch of token ids (inputs and next-token targets).
@@ -1279,32 +1309,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-# NEW: Generate a pair of scratchpad samples with operands in both orders
-# Returns (A op B, B op A). For division, skips reversed if it would divide by zero.
-def generate_scratchpad_pair(cfg: GenConfig) -> tuple[str, str | None]:
-    op = _choose_op(cfg)
-    if op == '+':
-        a, b = _rand_int(cfg.max_digits), _rand_int(cfg.max_digits)
-        t1 = _make_add_scratchpad(a, b, cfg.max_digits)
-        t2 = _make_add_scratchpad(b, a, cfg.max_digits)
-        return t1, t2
-    elif op == '-':
-        a, b = _make_sub_pair(cfg.max_digits)
-        t1 = _make_sub_scratchpad(a, b, cfg.max_digits)
-        t2 = _make_sub_scratchpad(b, a, cfg.max_digits)
-        return t1, t2
-    elif op == '*':
-        a, b = _rand_int(cfg.max_digits), _rand_int(cfg.max_digits)
-        t1 = _make_mul_scratchpad(a, b)
-        t2 = _make_mul_scratchpad(b, a)
-        return t1, t2
-    elif op == '/':
-        a, b = _make_div_pair(cfg.max_digits)
-        t1 = _make_div_scratchpad(a, b)
-        # Skip reversal for division to maintain integer division property
-        t2 = None
-        return t1, t2
-    else:
-        raise ValueError(f"Unknown operator: {op}")
