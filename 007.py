@@ -1167,7 +1167,7 @@ def main():
     sub = parser.add_subparsers(dest='cmd', required=True)
 
     p_train = sub.add_parser('train', help='Train the tiny arithmetic LLM on synthetic data')
-    p_train.add_argument('--steps', type=int, default=5000,
+    p_train.add_argument('--steps', type=int, default=1000,
                          help="Total number of training steps/iterations (default: 5000)")
     p_train.add_argument('--batch-size', type=int, default=128,
                          help="Batch size for training. Longer sequences may need smaller batches (default: 128)")
@@ -1189,8 +1189,8 @@ def main():
                          help="Checkpoint file path for saving/loading model (default: math_llm_scratchpad_model-007.pt)")
     p_train.add_argument('--log-every', type=int, default=100,
                          help="Print training progress every N steps (default: 100)")
-    p_train.add_argument('--eval-samples', type=int, default=100,
-                         help='Number of synthetic test samples for evaluation; set to 0 to skip evaluation (default: 100)')
+    p_train.add_argument('--eval-samples', type=int, default=500,
+                         help='Number of synthetic test samples for evaluation; set to 0 to skip evaluation (default: 500)')
     p_train.add_argument('--ops', type=str, default='+-*/',
                          help="String of operators to train on, e.g., '+-*/' for all four operations (default: +-*/)")
     p_train.add_argument('--op-probs', type=str, default=None,
