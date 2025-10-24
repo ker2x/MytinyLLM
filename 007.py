@@ -1,4 +1,3 @@
-
 """
 006_scratchpad.py — Tiny arithmetic LLM with Scratchpad Training
 
@@ -1033,7 +1032,8 @@ def train(
         if hasattr(torch, 'amp') and hasattr(torch.amp, 'autocast'):
             print("Using torch.amp for mixed precision training (bfloat16/float16)")
             scaler = torch.amp.GradScaler(dev.type) if dev.type in ['cuda', 'xpu'] else None
-            autocast_context = lambda: torch.amp.autocast(device_type=dev.type, dtype=torch.bfloat16 if dev.type == 'cpu' else torch.float16)
+            autocast_context = lambda: torch.amp.autocast(device_type=dev.type,
+                                                          dtype=torch.bfloat16 if dev.type == 'cpu' else torch.float16)
         elif hasattr(torch.cuda, 'amp'):
             print("Using torch.cuda.amp for mixed precision training (float16)")
             scaler = torch.cuda.amp.GradScaler() if dev.type == 'cuda' else None
@@ -1072,12 +1072,15 @@ def train(
 
     print("=== Curriculum Plan ===")
     current_step = 0
-    for i, (stage_max_digits, stage_n_steps, is_mixed) in enumerate(zip(curriculum_stages, stage_steps, stage_is_mixed)):
+    for i, (stage_max_digits, stage_n_steps, is_mixed) in enumerate(
+            zip(curriculum_stages, stage_steps, stage_is_mixed)):
         end_step = current_step + stage_n_steps
         if is_mixed:
-            print(f"  Stage {i + 1}/{len(curriculum_stages)}: mixed (1 to {stage_max_digits} digits) (Steps {current_step + 1} - {end_step})")
+            print(
+                f"  Stage {i + 1}/{len(curriculum_stages)}: mixed (1 to {stage_max_digits} digits) (Steps {current_step + 1} - {end_step})")
         else:
-            print(f"  Stage {i + 1}/{len(curriculum_stages)}: {stage_max_digits}-digit only (Steps {current_step + 1} - {end_step})")
+            print(
+                f"  Stage {i + 1}/{len(curriculum_stages)}: {stage_max_digits}-digit only (Steps {current_step + 1} - {end_step})")
         current_step = end_step
     print("=======================")
 
@@ -1270,7 +1273,8 @@ def load_model(ckpt_path: str, device: str = 'cpu') -> Tuple[TinyGPT, CharTokeni
     # Prefer checkpoint's saved vocab_size to ensure shapes match; fall back to tokenizer size.
     vocab_size = int(ckpt.get('vocab_size', getattr(tokenizer, 'vocab_size', 50)))
     if vocab_size != tokenizer.vocab_size:
-        raise RuntimeError(f"Checkpoint vocab_size ({vocab_size}) != current tokenizer vocab_size ({tokenizer.vocab_size}). Incompatible tokenizer/vocab; please retrain or use a matching checkpoint.")
+        raise RuntimeError(
+            f"Checkpoint vocab_size ({vocab_size}) != current tokenizer vocab_size ({tokenizer.vocab_size}). Incompatible tokenizer/vocab; please retrain or use a matching checkpoint.")
 
     # Reconstruct model with saved hyperparameters
     model = TinyGPT(
