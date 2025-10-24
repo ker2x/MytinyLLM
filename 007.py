@@ -112,12 +112,10 @@ def _make_div_pair(max_digits: int) -> Tuple[int, int]:
 
 
 def _make_sub_pair(max_digits: int) -> Tuple[int, int]:
-    # Allow negative results ~40% of the time for variety
+    # Generate two random integers
+    # With inversion (A-B and B-A), both orderings are covered
     a = _rand_int(max_digits)
     b = _rand_int(max_digits)
-    # 60% chance: ensure non-negative by swapping if needed
-    if random.random() > 0.4 and a < b:
-        a, b = b, a
     return a, b
 
 
@@ -461,9 +459,12 @@ def make_batch(tokenizer: CharTokenizer, batch_size: int, cfg: GenConfig, device
     NEW: Takes `max_pos` to warn about truncation.
     """
     samples: List[str] = []
-    # Keep adding samples until we have at least batch_size samples
+    # NEW: For each generated (A, B), also include the reversed (B, A) to teach operand order.
     while len(samples) < batch_size:
-        samples.append(generate_scratchpad_sample(cfg))
+        t1, t2 = generate_scratchpad_pair(cfg)
+        samples.append(t1)
+        if t2 is not None and len(samples) < batch_size:
+            samples.append(t2)
 
     encoded = [tokenizer.encode(s) for s in samples]
     max_len_in_batch = max(len(x) for x in encoded)
@@ -1278,3 +1279,32 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# NEW: Generate a pair of scratchpad samples with operands in both orders
+# Returns (A op B, B op A). For division, skips reversed if it would divide by zero.
+def generate_scratchpad_pair(cfg: GenConfig) -> tuple[str, str | None]:
+    op = _choose_op(cfg)
+    if op == '+':
+        a, b = _rand_int(cfg.max_digits), _rand_int(cfg.max_digits)
+        t1 = _make_add_scratchpad(a, b, cfg.max_digits)
+        t2 = _make_add_scratchpad(b, a, cfg.max_digits)
+        return t1, t2
+    elif op == '-':
+        a, b = _make_sub_pair(cfg.max_digits)
+        t1 = _make_sub_scratchpad(a, b, cfg.max_digits)
+        t2 = _make_sub_scratchpad(b, a, cfg.max_digits)
+        return t1, t2
+    elif op == '*':
+        a, b = _rand_int(cfg.max_digits), _rand_int(cfg.max_digits)
+        t1 = _make_mul_scratchpad(a, b)
+        t2 = _make_mul_scratchpad(b, a)
+        return t1, t2
+    elif op == '/':
+        a, b = _make_div_pair(cfg.max_digits)
+        t1 = _make_div_scratchpad(a, b)
+        # Skip reversal for division to maintain integer division property
+        t2 = None
+        return t1, t2
+    else:
+        raise ValueError(f"Unknown operator: {op}")
