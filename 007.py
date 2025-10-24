@@ -61,22 +61,27 @@ class CharTokenizer:
     """
 
     def __init__(self):
+        """Initialize tokenizer with character vocabulary."""
         self.pad_token = '<PAD>'
         self.pad_id = 0
         # NEW: Added M and R for detailed multiplication scratchpad
+        # Build vocabulary: digits, operators, special chars, scratchpad markers
         chars = list("0123456789+-*/= \n[];:FAPCWKBMR>")
         # Reserve 0 for PAD, others start from 1
-        self.itos = [self.pad_token] + chars
-        self.stoi = {ch: i for i, ch in enumerate(self.itos)}
+        self.itos = [self.pad_token] + chars  # index to string mapping
+        self.stoi = {ch: i for i, ch in enumerate(self.itos)}  # string to index mapping
 
     @property
     def vocab_size(self) -> int:
+        """Return total vocabulary size (number of unique tokens)."""
         return len(self.itos)
 
     def encode(self, s: str) -> List[int]:
+        """Convert string to list of token IDs. Skips unknown characters."""
         return [self.stoi[c] for c in s if c in self.stoi]
 
     def decode(self, ids: List[int]) -> str:
+        """Convert list of token IDs back to string. Skips padding tokens."""
         return ''.join(self.itos[i] for i in ids if i != self.pad_id)
 
 
@@ -86,13 +91,22 @@ class CharTokenizer:
 
 @dataclass
 class GenConfig:
-    max_digits: int = 3
-    ops: str = "+-*/"
+    """Configuration for synthetic arithmetic data generation."""
+    max_digits: int = 3  # Maximum number of digits in operands
+    ops: str = "+-*/"  # String of operators to use
     # Optional per-operator sampling probabilities aligned with `ops`.
     op_probs: List[float] | None = None
 
 
 def _rand_int(max_digits: int) -> int:
+    """Generate random integer with up to max_digits digits.
+
+    Args:
+        max_digits: Maximum number of digits (e.g., 2 generates 0-99)
+
+    Returns:
+        Random integer in range [0, 10^max_digits - 1]
+    """
     if max_digits == 0: return 0
     lo = 0
     hi = 10 ** max_digits - 1
@@ -100,20 +114,38 @@ def _rand_int(max_digits: int) -> int:
 
 
 def _make_div_pair(max_digits: int) -> Tuple[int, int]:
-    # Ensure integer division with no remainder and non-trivial quotient.
+    """Generate operand pair (a, b) for integer division ensuring no remainder.
+
+    Creates pairs where a = b * q, ensuring a/b produces an integer quotient.
+
+    Args:
+        max_digits: Maximum digits for operands
+
+    Returns:
+        Tuple (dividend, divisor) where dividend/divisor has no remainder
+    """
     if max_digits == 0: return 0, 1  # Handle 0-digit case
     hi = 10 ** max_digits - 1
-    b = random.randint(1, hi)
+    b = random.randint(1, hi)  # divisor (non-zero)
     # Choose quotient q to avoid trivial zeros and keep result length challenging.
     lo_q = 0 if max_digits == 1 else 10 ** (max_digits - 1)
-    q = random.randint(lo_q, hi)
-    a = b * q
+    q = random.randint(lo_q, hi)  # quotient
+    a = b * q  # dividend = divisor * quotient
     return a, b
 
 
 def _make_sub_pair(max_digits: int) -> Tuple[int, int]:
-    # Generate two random integers
-    # With inversion (A-B and B-A), both orderings are covered
+    """Generate operand pair for subtraction.
+
+    Generates two random integers. Both A-B and B-A orderings are used
+    in training to teach commutative understanding.
+
+    Args:
+        max_digits: Maximum number of digits in each operand
+
+    Returns:
+        Tuple (a, b) of random integers
+    """
     a = _rand_int(max_digits)
     b = _rand_int(max_digits)
     return a, b
@@ -141,41 +173,47 @@ def _make_add_scratchpad(a: int, b: int, max_digits: int) -> str:
     carry = 0
     result_so_far = ""
 
+    # Process addition right-to-left (least significant digit first)
     for i in range(max_len - 1, -1, -1):
-        d1 = int(a_s[i])
-        d2 = int(b_s[i])
-        col_num = max_len - i
-        s = d1 + d2 + carry
+        d1 = int(a_s[i])  # digit from first number
+        d2 = int(b_s[i])  # digit from second number
+        col_num = max_len - i  # column number (C1 is rightmost)
+        s = d1 + d2 + carry  # sum including carry from previous column
 
+        # Record the addition step for this column
         step_str = f"C{col_num}:{d1}+{d2}"
         if carry > 0:
-            step_str += f"+{carry}"
+            step_str += f"+{carry}"  # show carry explicitly
         step_str += f"={s}"
         steps.append(step_str)
 
-        write_val = s % 10
-        carry = s // 10
+        # Calculate new digit and carry
+        write_val = s % 10  # digit to write (ones place)
+        carry = s // 10  # carry to next column (tens place)
 
-        steps.append(f"W:{write_val}")
+        steps.append(f"W:{write_val}")  # write digit to result
         result_so_far = str(write_val) + result_so_far
         if carry > 0:
-            steps.append(f"K:{carry}")
+            steps.append(f"K:{carry}")  # record carry for next step
 
     # Clean up leading zero steps: keep only the least-significant columns needed
+    # This removes unnecessary leading zero columns from the scratchpad
     final_steps = []
     final_res_str = str(res)
     keep_cols = max(1, len(final_res_str))  # number of columns to keep from the right (C1..Ckeep)
     col_num = 0
     for step in steps:
         if step.startswith("C"):
+            # Extract column number from step like "C2:..."
             col_num = int(re.search(r"C(\d+):", step).group(1))
             if col_num <= keep_cols:
                 final_steps.append(step)
         elif step.startswith("W:") or step.startswith("K:"):
+            # Keep write/carry steps only for relevant columns
             if col_num <= keep_cols:
                 final_steps.append(step)
 
-    final_steps.append(f"F:{res}")
+    final_steps.append(f"F:{res}")  # add final answer
     return f"{a}+{b}=[{';'.join(final_steps)}]\n"
 
 
@@ -202,18 +240,20 @@ def _make_sub_scratchpad(a: int, b: int, max_digits: int) -> str:
     a_s, b_s = a_s.zfill(max_len), b_s.zfill(max_len)
 
     steps = []
-    a_list = [int(d) for d in a_s]
+    a_list = [int(d) for d in a_s]  # convert to mutable list for borrowing
 
+    # Process subtraction right-to-left (least significant digit first)
     for i in range(max_len - 1, -1, -1):
-        d1 = a_list[i]
-        d2 = int(b_s[i])
-        col_num = max_len - i
+        d1 = a_list[i]  # digit from minuend (top number)
+        d2 = int(b_s[i])  # digit from subtrahend (bottom number)
+        col_num = max_len - i  # column number (C1 is rightmost)
 
         step_str = f"C{col_num}:{d1}-{d2}"
 
+        # Check if we need to borrow
         if d1 < d2:
             steps.append(step_str)
-            # Find first non-zero digit to borrow from
+            # Find first non-zero digit to the left to borrow from
             j = i - 1
             while j >= 0 and a_list[j] == 0:
                 j -= 1
@@ -222,20 +262,21 @@ def _make_sub_scratchpad(a: int, b: int, max_digits: int) -> str:
                 # This indicates a bug in _make_sub_pair or logic
                 return f"{a}-{b}=[F:{res}]\n"  # Fallback
 
-            # Borrow from a_list[j]
+            # Borrow from a_list[j] (reduce by 1)
             steps.append(f"B:{a_list[j]}->{a_list[j] - 1}")
             a_list[j] -= 1
-            # Propagate borrow (9s)
+            # Propagate borrow through intermediate zeros (they become 9)
             for k in range(j + 1, i):
-                # a_list[k] was 0
+                # a_list[k] was 0, becomes 9 after borrow
                 steps.append(f"B:0->9")  # Show 0 becomes 9
                 a_list[k] = 9
 
-            d1 += 10
+            d1 += 10  # add 10 to current digit (borrowed 1 from higher place)
             # a_list[i] = d1 # This is implicit, d1 is just used for calc
             steps.append(f"C{col_num}:{d1}-{d2}={d1 - d2}")
             steps.append(f"W:{d1 - d2}")
         else:
+            # No borrow needed, simple subtraction
             s = d1 - d2
             step_str += f"={s}"
             steps.append(step_str)
@@ -282,27 +323,28 @@ def _make_mul_scratchpad(a: int, b: int) -> str:
         steps.append(f"F:0")
         return f"{a}*{b}=[{';'.join(steps)}]\n"
 
-    # Process each digit of b from right to left
+    # Process each digit of b from right to left (ones, tens, hundreds, etc.)
     for b_idx, b_digit_ch in enumerate(reversed(b_s)):
-        b_digit = int(b_digit_ch)
+        b_digit = int(b_digit_ch)  # current digit of second operand
         if b_digit == 0:
-            continue  # Skip zero digits
+            continue  # Skip zero digits (no contribution to product)
 
-        multiplier = b_digit * (10 ** b_idx)
+        multiplier = b_digit * (10 ** b_idx)  # place value (e.g., 2*1, 1*10)
 
-        # Start this partial product
+        # Start this partial product (e.g., "P1:13*2")
         steps.append(f"P{b_idx + 1}:{a}*{multiplier}")
 
-        # Multiply a by the single digit b_digit, digit by digit with carries
+        # Multiply a by the single digit b_digit, processing digit by digit with carries
         a_s = str(a)
         carry = 0
         partial_result = ""
 
+        # Process each digit of a from right to left
         for a_pos, a_digit_ch in enumerate(reversed(a_s), start=1):
-            a_digit = int(a_digit_ch)
-            product = a_digit * b_digit + carry
-            digit_out = product % 10
-            new_carry = product // 10
+            a_digit = int(a_digit_ch)  # current digit of first operand
+            product = a_digit * b_digit + carry  # multiply and add carry
+            digit_out = product % 10  # digit to write (ones place)
+            new_carry = product // 10  # carry to next digit (tens place)
 
             # Show the single-digit multiplication step
             base_product = a_digit * b_digit
@@ -311,34 +353,36 @@ def _make_mul_scratchpad(a: int, b: int) -> str:
             else:
                 steps.append(f"M{a_pos}:{a_digit}*{b_digit}={base_product}")
 
-            steps.append(f"W:{digit_out}")
+            steps.append(f"W:{digit_out}")  # write this digit
             if new_carry > 0 and a_pos < len(a_s):
-                steps.append(f"K:{new_carry}")
+                steps.append(f"K:{new_carry}")  # record carry for next digit
 
             partial_result = str(digit_out) + partial_result
             carry = new_carry
 
-        # Write any remaining carry
+        # Write any remaining carry (most significant digit)
         if carry > 0:
             steps.append(f"W:{carry}")
             partial_result = str(carry) + partial_result
 
-        # Adjust for place value (multiply by 10^b_idx)
+        # Adjust for place value (multiply by 10^b_idx to shift left)
         partial_value = int(partial_result) * (10 ** b_idx)
-        steps.append(f"R{b_idx + 1}:{partial_value}")
+        steps.append(f"R{b_idx + 1}:{partial_value}")  # record partial product result
         partials.append(partial_value)
 
-    # Add all partial products
+    # Add all partial products to get final result
     if len(partials) == 0:
-        partials.append(0)
+        partials.append(0)  # edge case: no partials generated
 
     if len(partials) == 1:
+        # Only one partial product (e.g., single-digit multiplier)
         steps.append(f"A:{partials[0]}={partials[0]}")
     else:
+        # Multiple partial products to add (e.g., "A:26+130=156")
         sum_str = "+".join(map(str, partials))
         steps.append(f"A:{sum_str}={sum(partials)}")
 
-    steps.append(f"F:{res}")
+    steps.append(f"F:{res}")  # final answer
     return f"{a}*{b}=[{';'.join(steps)}]\n"
 
 
@@ -369,31 +413,32 @@ def _make_div_scratchpad(a: int, b: int) -> str:
     n = len(dividend_str)
     step_num = 0  # Sequential step counter
 
+    # Process each digit of dividend from left to right (long division)
     for i, ch in enumerate(dividend_str, start=1):
-        # Bring down next digit and form the new chunk
+        # Bring down next digit and form the new chunk (working value)
         chunk = chunk * 10 + int(ch)
-        # Choose quotient digit for this place
+        # Choose quotient digit for this place (how many times divisor fits in chunk)
         qd = chunk // divisor if divisor != 0 else 0
 
-        # Skip emitting product/subtraction/write for leading zero quotient digits
+        # Skip emitting steps for leading zero quotient digits (haven't started yet)
         if not started and qd == 0 and i < n:
-            # carry chunk forward and continue
+            # carry chunk forward and continue to next digit
             continue
 
         # From here on, we are emitting quotient digits (including zeros)
         started = True
-        step_num += 1  # Increment step counter
-        # Comparator context for this step
+        step_num += 1  # Increment step counter for scratchpad markers
+        # Comparator context for this step (is chunk >= divisor?)
         steps.append(f"C{step_num}:{chunk}>={divisor}")
-        prod = qd * divisor
-        rem = chunk - prod
-        # Record product and subtraction
+        prod = qd * divisor  # product of quotient digit and divisor
+        rem = chunk - prod  # remainder after subtracting product
+        # Record product and subtraction steps
         steps.append(f"P{step_num}:{qd}*{divisor}={prod}")
         steps.append(f"C{step_num}:{chunk}-{prod}={rem}")
         # Write the quotient digit
         steps.append(f"W:{qd}")
         q_digits.append(str(qd))
-        # Carry remainder to next step
+        # Carry remainder to next step (bring down next digit in next iteration)
         chunk = rem
 
     # If we never wrote a digit (e.g., a < b, typically only when a==0 in our data),
@@ -414,21 +459,38 @@ def _make_div_scratchpad(a: int, b: int) -> str:
 # --- End new functions ---
 
 def _choose_op(cfg: GenConfig) -> str:
-    """Choose an operator, optionally using configured probabilities."""
+    """Choose an operator, optionally using configured probabilities.
+
+    Args:
+        cfg: Configuration with operators and optional probabilities
+
+    Returns:
+        Single character operator ('+', '-', '*', or '/')
+    """
     ops = list(cfg.ops)
     weights = None
     if cfg.op_probs is not None:
+        # Use custom operator probabilities if provided and valid
         if len(cfg.op_probs) == len(ops):
             weights = [max(0.0, float(w)) for w in cfg.op_probs]
             if sum(weights) <= 0:
-                weights = None
+                weights = None  # invalid weights, fall back to uniform
     if weights is None:
-        return random.choice(ops)
-    return random.choices(ops, weights=weights, k=1)[0]
+        return random.choice(ops)  # uniform random selection
+    return random.choices(ops, weights=weights, k=1)[0]  # weighted random selection
 
 
 def generate_scratchpad_sample(cfg: GenConfig) -> str:
     """Generate one synthetic arithmetic sample as text WITH SCRATCHPAD.
+
+    Creates a training sample showing the step-by-step working (scratchpad)
+    for an arithmetic operation.
+
+    Args:
+        cfg: Generation configuration (max_digits, operators, etc.)
+
+    Returns:
+        String like "85+47=[C1:5+7=12;W:2;K:1;C2:8+4+1=13;W:13;F:132]\n"
     """
     op = _choose_op(cfg)
     if op == '+':
@@ -536,94 +598,173 @@ def make_batch(tokenizer: CharTokenizer, batch_size: int, cfg: GenConfig, device
 # -----------------------------
 
 class CausalSelfAttention(nn.Module):
+    """Multi-head causal self-attention mechanism.
+
+    Implements masked self-attention where each position can only attend to
+    previous positions (causal/autoregressive). Used in decoder-only transformers.
+    """
+
     def __init__(self, n_embd: int, n_heads: int, dropout: float):
+        """Initialize attention module.
+
+        Args:
+            n_embd: Embedding dimension (must be divisible by n_heads)
+            n_heads: Number of attention heads
+            dropout: Dropout probability
+        """
         super().__init__()
         assert n_embd % n_heads == 0
         self.n_heads = n_heads
+        # Linear projections for key, query, value
         self.key = nn.Linear(n_embd, n_embd, bias=False)
         self.query = nn.Linear(n_embd, n_embd, bias=False)
         self.value = nn.Linear(n_embd, n_embd, bias=False)
-        self.proj = nn.Linear(n_embd, n_embd)
-        self.attn_drop = nn.Dropout(dropout)
-        self.resid_drop = nn.Dropout(dropout)
+        self.proj = nn.Linear(n_embd, n_embd)  # output projection
+        self.attn_drop = nn.Dropout(dropout)  # dropout on attention weights
+        self.resid_drop = nn.Dropout(dropout)  # dropout on output
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, T, C = x.shape
-        H = self.n_heads
-        head_dim = C // H
+        """Forward pass: compute multi-head causal self-attention.
 
+        Args:
+            x: Input tensor of shape (batch, seq_len, n_embd)
+
+        Returns:
+            Output tensor of shape (batch, seq_len, n_embd)
+        """
+        B, T, C = x.shape  # batch size, sequence length, embedding dimension
+        H = self.n_heads
+        head_dim = C // H  # dimension per attention head
+
+        # Compute key, query, value and reshape for multi-head attention
         k = self.key(x).view(B, T, H, head_dim).transpose(1, 2)  # (B, H, T, d)
         q = self.query(x).view(B, T, H, head_dim).transpose(1, 2)
         v = self.value(x).view(B, T, H, head_dim).transpose(1, 2)
 
+        # Compute attention scores (scaled dot-product)
         att = (q @ k.transpose(-2, -1)) / math.sqrt(head_dim)  # (B, H, T, T)
+        # Apply causal mask (lower triangular) to prevent attending to future positions
         mask = torch.tril(torch.ones(T, T, device=x.device)).unsqueeze(0).unsqueeze(0)
-        att = att.masked_fill(mask == 0, float('-inf'))
-        att = F.softmax(att, dim=-1)
-        att = torch.nan_to_num(att, nan=0.0)
+        att = att.masked_fill(mask == 0, float('-inf'))  # mask future positions
+        att = F.softmax(att, dim=-1)  # normalize attention weights
+        att = torch.nan_to_num(att, nan=0.0)  # replace NaN with 0 (e.g., when all -inf)
         att = self.attn_drop(att)
+        # Apply attention weights to values
         y = att @ v  # (B, H, T, d)
+        # Concatenate heads and project
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.resid_drop(self.proj(y))
         return y
 
 
 class Block(nn.Module):
+    """Transformer block with attention and feedforward layers.
+
+    Implements the standard transformer block: LayerNorm -> Attention -> Add,
+    followed by LayerNorm -> MLP -> Add (residual connections).
+    """
+
     def __init__(self, n_embd: int, n_heads: int, dropout: float, mlp_mult: int = 4):
+        """Initialize transformer block.
+
+        Args:
+            n_embd: Embedding dimension
+            n_heads: Number of attention heads
+            dropout: Dropout probability
+            mlp_mult: MLP hidden dimension multiplier (default 4x embedding dim)
+        """
         super().__init__()
-        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)  # layer norm before attention
         self.attn = CausalSelfAttention(n_embd, n_heads, dropout)
-        self.ln2 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)  # layer norm before MLP
+        # MLP: 2-layer feedforward network with GELU activation
         self.mlp = nn.Sequential(
-            nn.Linear(n_embd, mlp_mult * n_embd),
-            nn.GELU(),
-            nn.Linear(mlp_mult * n_embd, n_embd),
+            nn.Linear(n_embd, mlp_mult * n_embd),  # expand
+            nn.GELU(),  # non-linearity
+            nn.Linear(mlp_mult * n_embd, n_embd),  # project back
             nn.Dropout(dropout),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.attn(self.ln1(x))
-        x = x + self.mlp(self.ln2(x))
+        """Forward pass with residual connections.
+
+        Args:
+            x: Input tensor of shape (batch, seq_len, n_embd)
+
+        Returns:
+            Output tensor of same shape
+        """
+        x = x + self.attn(self.ln1(x))  # attention with residual
+        x = x + self.mlp(self.ln2(x))  # MLP with residual
         return x
 
 
 class TinyGPT(nn.Module):
+    """Tiny GPT-style decoder-only transformer for arithmetic.
+
+    A minimal implementation of a transformer language model similar to GPT.
+    Uses token + position embeddings, stacked transformer blocks, and a
+    language modeling head.
+    """
+
     def __init__(self, vocab_size: int, n_embd: int = 128, n_layer: int = 2, n_head: int = 4, dropout: float = 0.1,
                  max_pos: int = 512):
+        """Initialize the model.
+
+        Args:
+            vocab_size: Size of vocabulary (number of unique tokens)
+            n_embd: Embedding dimension
+            n_layer: Number of transformer blocks
+            n_head: Number of attention heads per block
+            dropout: Dropout probability
+            max_pos: Maximum sequence length (context window size)
+        """
         super().__init__()
         self.vocab_size = vocab_size
-        self.tok_emb = nn.Embedding(vocab_size, n_embd)
-        self.pos_emb = nn.Embedding(max_pos, n_embd)
-        self.drop = nn.Dropout(dropout)
+        self.tok_emb = nn.Embedding(vocab_size, n_embd)  # token embeddings
+        self.pos_emb = nn.Embedding(max_pos, n_embd)  # positional embeddings
+        self.drop = nn.Dropout(dropout)  # input dropout
+        # Stack of transformer blocks
         self.blocks = nn.ModuleList([Block(n_embd, n_head, dropout) for _ in range(n_layer)])
-        self.ln_f = nn.LayerNorm(n_embd)
-        self.head = nn.Linear(n_embd, vocab_size, bias=False)
+        self.ln_f = nn.LayerNorm(n_embd)  # final layer norm
+        self.head = nn.Linear(n_embd, vocab_size, bias=False)  # language modeling head
         self.max_pos = max_pos  # store for saving/loading
 
     def forward(self, idx: torch.Tensor) -> torch.Tensor:
+        """Forward pass: convert token indices to logits.
+
+        Args:
+            idx: Token indices of shape (batch, seq_len)
+
+        Returns:
+            Logits of shape (batch, seq_len, vocab_size)
+        """
         B, T = idx.size()
         if T >= self.max_pos:
             # This should not happen if make_batch truncates, but as a safeguard
             idx = idx[:, :self.max_pos]
             T = idx.size(1)
 
+        # Create position indices (0, 1, 2, ..., T-1)
         pos = torch.arange(0, T, dtype=torch.long, device=idx.device).unsqueeze(0)
 
         try:
-            tok_embs = self.tok_emb(idx)
-            pos_embs = self.pos_emb(pos)
+            tok_embs = self.tok_emb(idx)  # (B, T, n_embd)
+            pos_embs = self.pos_emb(pos)  # (B, T, n_embd)
         except IndexError as e:
             print(
                 f"Error during embedding lookup. T={T}, max_pos={self.max_pos}, idx.shape={idx.shape}, pos.shape={pos.shape}")
             print(f"Max index in idx: {idx.max()}, Vocab size: {self.vocab_size}")
             raise e
 
+        # Combine token and position embeddings
         x = tok_embs + pos_embs
         x = self.drop(x)
+        # Pass through transformer blocks
         for blk in self.blocks:
             x = blk(x)
-        x = self.ln_f(x)
-        logits = self.head(x)
+        x = self.ln_f(x)  # final layer norm
+        logits = self.head(x)  # project to vocabulary
         return logits
 
 
@@ -633,7 +774,18 @@ class TinyGPT(nn.Module):
 # -----------------------------
 
 def compute_loss(logits: torch.Tensor, targets: torch.Tensor, pad_id: int) -> torch.Tensor:
+    """Compute cross-entropy loss for language modeling.
+
+    Args:
+        logits: Model predictions of shape (batch, seq_len, vocab_size)
+        targets: Target token IDs of shape (batch, seq_len)
+        pad_id: Padding token ID to ignore in loss computation
+
+    Returns:
+        Scalar loss value
+    """
     B, T, V = logits.shape
+    # Flatten to (batch*seq_len, vocab_size) and (batch*seq_len,)
     loss = F.cross_entropy(logits.view(B * T, V), targets.view(B * T), ignore_index=pad_id)
     return loss
 
@@ -643,7 +795,18 @@ def generate(model: TinyGPT, tokenizer: CharTokenizer, prompt: str, max_new_toke
              device: torch.device | None = None) -> str:
     """Greedy decoding from the model given a string prompt.
 
-    NEW: Increased max_new_tokens default to 128 for scratchpad.
+    Generates tokens one at a time using greedy decoding (argmax) until
+    newline is encountered or max_new_tokens is reached.
+
+    Args:
+        model: The trained TinyGPT model
+        tokenizer: Character tokenizer for encoding/decoding
+        prompt: Input string to continue from (e.g., "12+3=")
+        max_new_tokens: Maximum number of tokens to generate (default 128)
+        device: Device to run on (inferred from model if None)
+
+    Returns:
+        Complete generated string including prompt
     """
     device = device or next(model.parameters()).device
     model.eval()
@@ -654,17 +817,17 @@ def generate(model: TinyGPT, tokenizer: CharTokenizer, prompt: str, max_new_toke
     max_pos = model.max_pos
 
     for _ in range(max_new_tokens):
-        # Truncate input sequence if it exceeds max_pos
+        # Truncate input sequence if it exceeds max_pos (sliding window)
         x_cond = x if x.size(1) <= max_pos else x[:, -max_pos:]
 
         if x_cond.size(1) == 0: break  # Should not happen
 
-        logits = model(x_cond)
-        next_logits = logits[:, -1, :]
-        next_id = torch.argmax(next_logits, dim=-1, keepdim=True)  # greedy
-        x = torch.cat([x, next_id], dim=1)
-        ch = tokenizer.itos[next_id.item()]
-        if ch == '\n':
+        logits = model(x_cond)  # get predictions
+        next_logits = logits[:, -1, :]  # take last position
+        next_id = torch.argmax(next_logits, dim=-1, keepdim=True)  # greedy selection
+        x = torch.cat([x, next_id], dim=1)  # append to sequence
+        ch = tokenizer.itos[next_id.item()]  # decode token
+        if ch == '\n':  # stop at newline
             break
     out = tokenizer.decode(x[0].tolist())
     return out
@@ -676,11 +839,20 @@ def generate(model: TinyGPT, tokenizer: CharTokenizer, prompt: str, max_new_toke
 # -----------------------------
 
 def pick_device(device: str) -> torch.device:
+    """Select compute device (CPU, CUDA, or MPS).
+
+    Args:
+        device: Device string ('auto', 'cpu', 'cuda', 'mps')
+
+    Returns:
+        torch.device object for the selected/available device
+    """
     if device == 'auto':
+        # Auto-detect best available device
         if torch.cuda.is_available():
-            return torch.device('cuda')
+            return torch.device('cuda')  # NVIDIA GPU
         if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            return torch.device('mps')
+            return torch.device('mps')  # Apple Silicon GPU
         return torch.device('cpu')
     if device == 'cuda':
         if torch.cuda.is_available():
@@ -733,12 +905,28 @@ def print_startup_info(cmd: str, requested_device: str, picked_device: torch.dev
 
 
 def _count_parameters(model: nn.Module) -> tuple[int, int]:
+    """Count total and trainable parameters in a model.
+
+    Args:
+        model: PyTorch model
+
+    Returns:
+        Tuple of (total_params, trainable_params)
+    """
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total, trainable
 
 
 def _format_num(n: int) -> str:
+    """Format large numbers with K/M/B suffixes.
+
+    Args:
+        n: Number to format
+
+    Returns:
+        Formatted string (e.g., "1.23M", "456K", "7.89B")
+    """
     if n >= 1_000_000_000:
         return f"{n / 1_000_000_000:.2f}B"
     if n >= 1_000_000:
@@ -1064,7 +1252,16 @@ def generate_sample_prompt(cfg: GenConfig) -> str:
 
 def load_model(ckpt_path: str, device: str = 'cpu') -> Tuple[TinyGPT, CharTokenizer, torch.device]:
     """Load a saved checkpoint and return (model, tokenizer, device).
-    NEW: Now handles 'max_pos'
+
+    Args:
+        ckpt_path: Path to checkpoint file (.pt)
+        device: Device string ('auto', 'cpu', 'cuda', 'mps')
+
+    Returns:
+        Tuple of (model, tokenizer, device)
+
+    Raises:
+        RuntimeError: If checkpoint vocab_size doesn't match tokenizer
     """
     dev = pick_device(device)
     tokenizer = CharTokenizer()
@@ -1075,16 +1272,17 @@ def load_model(ckpt_path: str, device: str = 'cpu') -> Tuple[TinyGPT, CharTokeni
     if vocab_size != tokenizer.vocab_size:
         raise RuntimeError(f"Checkpoint vocab_size ({vocab_size}) != current tokenizer vocab_size ({tokenizer.vocab_size}). Incompatible tokenizer/vocab; please retrain or use a matching checkpoint.")
 
+    # Reconstruct model with saved hyperparameters
     model = TinyGPT(
         vocab_size=vocab_size,
         n_embd=ckpt.get('n_embd', 128),
         n_layer=ckpt.get('n_layer', 2),
         n_head=ckpt.get('n_head', 4),
         dropout=ckpt.get('dropout', 0.1),
-        max_pos=ckpt.get('max_pos', 512),  # Load max_pos
+        max_pos=ckpt.get('max_pos', 512),  # load max_pos from checkpoint
     ).to(dev)
-    model.load_state_dict(ckpt['model_state_dict'])
-    model.eval()
+    model.load_state_dict(ckpt['model_state_dict'])  # load trained weights
+    model.eval()  # set to evaluation mode
     return model, tokenizer, dev
 
 
@@ -1093,7 +1291,15 @@ def load_model(ckpt_path: str, device: str = 'cpu') -> Tuple[TinyGPT, CharTokeni
 # -----------------------------
 
 def _sample_operands_for_op(op: str, max_digits: int) -> Tuple[int, int]:
-    # (UNCHANGED from 005.py)
+    """Generate operands for a given operator.
+
+    Args:
+        op: Operator character ('+', '-', '*', '/')
+        max_digits: Maximum digits for operands
+
+    Returns:
+        Tuple of (operand1, operand2)
+    """
     if max_digits == 0:  # Handle 0-digit case
         if op == '/': return 0, 1
         return 0, 0
@@ -1109,7 +1315,16 @@ def _sample_operands_for_op(op: str, max_digits: int) -> Tuple[int, int]:
 
 
 def _ground_truth(a: int, b: int, op: str) -> int:
-    # (UNCHANGED from 005.py)
+    """Compute ground truth result for arithmetic operation.
+
+    Args:
+        a: First operand
+        b: Second operand
+        op: Operator character ('+', '-', '*', '/')
+
+    Returns:
+        Integer result of the operation
+    """
     if op == '+':
         return a + b
     if op == '-':
@@ -1117,26 +1332,32 @@ def _ground_truth(a: int, b: int, op: str) -> int:
     if op == '*':
         return a * b
     if op == '/':
-        return a // b if b != 0 else 0
+        return a // b if b != 0 else 0  # integer division
     raise ValueError(f"Unknown operator: {op}")
 
 
 def _extract_result_from_text(text: str) -> str:
+    """Extract the model-predicted result from a scratchpad string.
+
+    Looks for the "F:..." pattern where F = Final answer marker.
+
+    Args:
+        text: Generated text containing scratchpad
+            Example: "85+47=[C1:5+7=12;W:2;K:1;C2:8+4+1=13;W:13;F:132]"
+
+    Returns:
+        Extracted answer as string (e.g., "132")
     """
-    NEW: Extract the model-predicted result from a scratchpad string.
-    We look for the pattern "F:..." where F = Final answer marker.
-    Example: From "85+47=[C1:5+7=12;W:2;K:1;C2:8+4+1=13;W:13;F:132]" extracts "132"
-    """
-    # Regex: capture the last occurrence of F:<int> (allow optional leading minus)
+    # Primary method: regex to capture the last occurrence of F:<int> (allow optional leading minus)
     matches = re.findall(r"F:(-?\d+)", text)
     if matches:
-        return matches[-1]
+        return matches[-1]  # take last match
 
     # Fallback: if no "F:", try to find "...=...[...]\n"
-    # and extract the ... part. This is for robustness.
+    # and extract the ... part. This is for robustness with malformed outputs.
     # But the "F:" marker is the primary method.
 
-    # Fallback 2: your old method (for debugging simple lookups like division)
+    # Fallback 2: old extraction method (for debugging simple lookups like division)
     if '=' not in text:
         return ''
     tail = text.split('=', 1)[1]
@@ -1160,20 +1381,33 @@ def _extract_result_from_text(text: str) -> str:
 def evaluate(model: TinyGPT, tokenizer: CharTokenizer, cfg: GenConfig, n_samples: int, device: torch.device,
              max_pos: int) -> dict:
     """Run a synthetic test set and compute per-op and overall accuracy.
-    NEW: Uses the new _extract_result_from_text
+
+    Generates random arithmetic problems, evaluates model predictions,
+    and computes accuracy statistics per operator and overall.
+
+    Args:
+        model: Trained TinyGPT model
+        tokenizer: Character tokenizer
+        cfg: Generation config (operators, max_digits)
+        n_samples: Number of test samples to evaluate
+        device: Device to run on
+        max_pos: Maximum position for generation
+
+    Returns:
+        Dictionary with 'per_op' (per-operator stats) and 'overall' stats
     """
     counts = {op: {'correct': 0, 'total': 0} for op in cfg.ops}
-    log_interval = max(1, n_samples // 10)
+    log_interval = max(1, n_samples // 10)  # log progress every 10%
 
     for i in range(n_samples):
         if i % log_interval == 0 and i > 0:
             print(f"  eval sample {i}/{n_samples}")
 
-        op = random.choice(cfg.ops)
-        a, b = _sample_operands_for_op(op, cfg.max_digits)
-        expected = str(_ground_truth(a, b, op))
+        op = random.choice(cfg.ops)  # pick random operator
+        a, b = _sample_operands_for_op(op, cfg.max_digits)  # generate operands
+        expected = str(_ground_truth(a, b, op))  # compute correct answer
         prompt = f"{a}{op}{b}="
-        # Generate the full scratchpad
+        # Generate the full scratchpad from model
         out = generate(model, tokenizer, prompt, max_new_tokens=max_pos, device=device)
         # Extract the final answer from the scratchpad
         pred = _extract_result_from_text(out)
@@ -1182,6 +1416,7 @@ def evaluate(model: TinyGPT, tokenizer: CharTokenizer, cfg: GenConfig, n_samples
         if pred == expected:
             counts[op]['correct'] += 1
 
+    # Aggregate overall statistics
     total_correct = sum(v['correct'] for v in counts.values())
     total = sum(v['total'] for v in counts.values())
     return {
