@@ -152,6 +152,123 @@ def _make_sub_pair(max_digits: int) -> Tuple[int, int]:
 
 # --- NEW: Scratchpad Generator Functions ---
 
+def _pad_numbers_to_length(a: int, b: int, length: int) -> tuple[str, str]:
+    """Pad two numbers with leading zeros to specified length.
+
+    Args:
+        a: First number
+        b: Second number
+        length: Desired string length
+
+    Returns:
+        Tuple of (padded_a, padded_b) as strings
+    """
+    return str(a).zfill(length), str(b).zfill(length)
+
+
+def _process_multiplication_digit(a_digit: int, b_digit: int, carry: int, pos: int, steps: list[str]) -> tuple[int, int]:
+    """Process single digit multiplication with carry for one position.
+
+    Updates the steps list in place and returns the digit and new carry.
+
+    Args:
+        a_digit: Digit from first operand
+        b_digit: Digit from second operand (single digit multiplier)
+        carry: Carry from previous position
+        pos: Position in result (1-indexed, from right)
+        steps: List to append step strings to
+
+    Returns:
+        Tuple of (digit_out, new_carry)
+    """
+    product = a_digit * b_digit + carry
+    digit_out = product % 10
+    new_carry = product // 10
+
+    # Show the single-digit multiplication step
+    if carry > 0:
+        steps.append(f"M{pos}:{a_digit}*{b_digit}+{carry}={product}")
+    else:
+        steps.append(f"M{pos}:{a_digit}*{b_digit}={a_digit * b_digit}")
+
+    steps.append(f"W:{digit_out}")  # write this digit
+    return digit_out, new_carry
+
+
+def _record_column_operation(col_num: int, d1: int, d2: int, op: str, carry: int = 0) -> str:
+    """Create a column operation string (e.g., 'C1:5+7=12' or 'C2:8-3=5').
+
+    Args:
+        col_num: Column number (1 = rightmost)
+        d1: First digit
+        d2: Second digit
+        op: Operator ('+' or '-')
+        carry: Optional carry/borrow value to include
+
+    Returns:
+        Formatted column step string
+    """
+    result = (d1 + carry + d2) if op == '+' else (d1 - d2)
+    step = f"C{col_num}:{d1}{op}{d2}"
+    if carry > 0:
+        step += f"+{carry}"
+    step += f"={result}"
+    return step
+
+
+def _format_scratchpad(a: int, b: int, op: str, steps: list[str], result: int) -> str:
+    """Format the complete scratchpad string with problem, steps, and result.
+
+    Args:
+        a: First operand
+        b: Second operand
+        op: Operator character
+        steps: List of scratchpad step strings
+        result: Final answer
+
+    Returns:
+        Complete formatted scratchpad string with newline
+    """
+    final_steps = _cleanup_leading_zero_steps(steps, result)
+    final_steps.append(f"F:{result}")
+    return f"{a}{op}{b}=[{';'.join(final_steps)}]\n"
+
+
+def _cleanup_leading_zero_steps(steps: list[str], result: int) -> list[str]:
+    """Remove unnecessary leading zero column steps from scratchpad.
+
+    Keeps only the rightmost columns needed to represent the result.
+    For example, if result is 132 (3 digits), keep only C1, C2, C3 steps.
+
+    Args:
+        steps: List of scratchpad step strings
+        result: The final numeric result
+
+    Returns:
+        Filtered list of steps without leading zero columns
+    """
+    final_steps = []
+    final_res_str = str(result)
+    keep_cols = max(1, len(final_res_str))  # number of columns to keep from the right (C1..Ckeep)
+    col_num = 0
+
+    for step in steps:
+        if step.startswith("C"):
+            # Extract column number from step like "C2:..."
+            col_num = int(re.search(r"C(\d+):", step).group(1))
+            if col_num <= keep_cols:
+                final_steps.append(step)
+        elif step.startswith("W:") or step.startswith("K:") or step.startswith("B:"):
+            # Keep write/carry/borrow steps only for relevant columns
+            if col_num <= keep_cols:
+                final_steps.append(step)
+        else:
+            # Keep other steps (like F:, P:, etc.)
+            final_steps.append(step)
+
+    return final_steps
+
+
 def _make_add_scratchpad(a: int, b: int, max_digits: int) -> str:
     """Generates a scratchpad for right-to-left addition with carry.
     Example: 85+47=[C1:5+7=12;W:2;K:1;C2:8+4+1=13;W:13;F:132]
@@ -162,11 +279,10 @@ def _make_add_scratchpad(a: int, b: int, max_digits: int) -> str:
     - K: Carry this value to next column
     - F: Final answer
     """
-    a_s, b_s = str(a), str(b)
     res = a + b
-    # Pad to max_digits + 1 (to handle overflow)
-    max_len = max(len(a_s), len(b_s)) + 1
-    a_s, b_s = a_s.zfill(max_len), b_s.zfill(max_len)
+    # Pad to max_digits + 1 (to handle overflow/carry)
+    max_len = max(len(str(a)), len(str(b))) + 1
+    a_s, b_s = _pad_numbers_to_length(a, b, max_len)
 
     steps = []
     carry = 0
@@ -180,11 +296,7 @@ def _make_add_scratchpad(a: int, b: int, max_digits: int) -> str:
         s = d1 + d2 + carry  # sum including carry from previous column
 
         # Record the addition step for this column
-        step_str = f"C{col_num}:{d1}+{d2}"
-        if carry > 0:
-            step_str += f"+{carry}"  # show carry explicitly
-        step_str += f"={s}"
-        steps.append(step_str)
+        steps.append(_record_column_operation(col_num, d1, d2, '+', carry))
 
         # Calculate new digit and carry
         write_val = s % 10  # digit to write (ones place)
@@ -195,25 +307,8 @@ def _make_add_scratchpad(a: int, b: int, max_digits: int) -> str:
         if carry > 0:
             steps.append(f"K:{carry}")  # record carry for next step
 
-    # Clean up leading zero steps: keep only the least-significant columns needed
-    # This removes unnecessary leading zero columns from the scratchpad
-    final_steps = []
-    final_res_str = str(res)
-    keep_cols = max(1, len(final_res_str))  # number of columns to keep from the right (C1..Ckeep)
-    col_num = 0
-    for step in steps:
-        if step.startswith("C"):
-            # Extract column number from step like "C2:..."
-            col_num = int(re.search(r"C(\d+):", step).group(1))
-            if col_num <= keep_cols:
-                final_steps.append(step)
-        elif step.startswith("W:") or step.startswith("K:"):
-            # Keep write/carry steps only for relevant columns
-            if col_num <= keep_cols:
-                final_steps.append(step)
-
-    final_steps.append(f"F:{res}")  # add final answer
-    return f"{a}+{b}=[{';'.join(final_steps)}]\n"
+    # Format and return complete scratchpad
+    return _format_scratchpad(a, b, '+', steps, res)
 
 
 def _make_sub_scratchpad(a: int, b: int, max_digits: int) -> str:
@@ -231,12 +326,9 @@ def _make_sub_scratchpad(a: int, b: int, max_digits: int) -> str:
     if res < 0:
         return f"{a}-{b}=[F:{res}]\n"
 
-    a_s, b_s = str(a), str(b)
-    max_len = max(len(a_s), len(b_s))
-    if max_digits > max_len:
-        max_len = max_digits
-
-    a_s, b_s = a_s.zfill(max_len), b_s.zfill(max_len)
+    # Pad to at least max_digits or the length of the longer number
+    max_len = max(len(str(a)), len(str(b)), max_digits)
+    a_s, b_s = _pad_numbers_to_length(a, b, max_len)
 
     steps = []
     a_list = [int(d) for d in a_s]  # convert to mutable list for borrowing
@@ -247,11 +339,10 @@ def _make_sub_scratchpad(a: int, b: int, max_digits: int) -> str:
         d2 = int(b_s[i])  # digit from subtrahend (bottom number)
         col_num = max_len - i  # column number (C1 is rightmost)
 
-        step_str = f"C{col_num}:{d1}-{d2}"
-
         # Check if we need to borrow
         if d1 < d2:
-            steps.append(step_str)
+            # Record the initial subtraction attempt (shows we need to borrow)
+            steps.append(f"C{col_num}:{d1}-{d2}")
             # Find first non-zero digit to the left to borrow from
             j = i - 1
             while j >= 0 and a_list[j] == 0:
@@ -271,32 +362,16 @@ def _make_sub_scratchpad(a: int, b: int, max_digits: int) -> str:
                 a_list[k] = 9
 
             d1 += 10  # add 10 to current digit (borrowed 1 from higher place)
-            # a_list[i] = d1 # This is implicit, d1 is just used for calc
+            # Record the subtraction with borrowed amount
             steps.append(f"C{col_num}:{d1}-{d2}={d1 - d2}")
             steps.append(f"W:{d1 - d2}")
         else:
             # No borrow needed, simple subtraction
-            s = d1 - d2
-            step_str += f"={s}"
-            steps.append(step_str)
-            steps.append(f"W:{s}")
+            steps.append(_record_column_operation(col_num, d1, d2, '-'))
+            steps.append(f"W:{d1 - d2}")
 
-    # Clean up leading zero steps: keep only the least-significant columns needed
-    final_steps = []
-    final_res_str = str(res)
-    keep_cols = max(1, len(final_res_str))  # number of columns to keep from the right (C1..Ckeep)
-    col_num = 0
-    for step in steps:
-        if step.startswith("C"):
-            col_num = int(re.search(r"C(\d+):", step).group(1))
-            if col_num <= keep_cols:
-                final_steps.append(step)
-        elif step.startswith("W:") or step.startswith("B:"):
-            if col_num <= keep_cols:
-                final_steps.append(step)
-
-    final_steps.append(f"F:{res}")
-    return f"{a}-{b}=[{';'.join(final_steps)}]\n"
+    # Format and return complete scratchpad
+    return _format_scratchpad(a, b, '-', steps, res)
 
 
 def _make_mul_scratchpad(a: int, b: int) -> str:
@@ -341,20 +416,13 @@ def _make_mul_scratchpad(a: int, b: int) -> str:
         # Process each digit of a from right to left
         for a_pos, a_digit_ch in enumerate(reversed(a_s), start=1):
             a_digit = int(a_digit_ch)  # current digit of first operand
-            product = a_digit * b_digit + carry  # multiply and add carry
-            digit_out = product % 10  # digit to write (ones place)
-            new_carry = product // 10  # carry to next digit (tens place)
 
-            # Show the single-digit multiplication step
-            base_product = a_digit * b_digit
-            if carry > 0:
-                steps.append(f"M{a_pos}:{a_digit}*{b_digit}+{carry}={product}")
-            else:
-                steps.append(f"M{a_pos}:{a_digit}*{b_digit}={base_product}")
+            # Process this digit multiplication
+            digit_out, new_carry = _process_multiplication_digit(a_digit, b_digit, carry, a_pos, steps)
 
-            steps.append(f"W:{digit_out}")  # write this digit
+            # Record carry for next digit if needed
             if new_carry > 0 and a_pos < len(a_s):
-                steps.append(f"K:{new_carry}")  # record carry for next digit
+                steps.append(f"K:{new_carry}")
 
             partial_result = str(digit_out) + partial_result
             carry = new_carry
@@ -381,7 +449,8 @@ def _make_mul_scratchpad(a: int, b: int) -> str:
         sum_str = "+".join(map(str, partials))
         steps.append(f"A:{sum_str}={sum(partials)}")
 
-    steps.append(f"F:{res}")  # final answer
+    # Format and return complete scratchpad (no leading zero cleanup for multiplication)
+    steps.append(f"F:{res}")
     return f"{a}*{b}=[{';'.join(steps)}]\n"
 
 
