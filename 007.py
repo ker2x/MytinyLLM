@@ -1158,7 +1158,10 @@ def train(
     total_step_counter = 0
     _printed_log_legend = False
 
-    for stage_max_digits, stage_n_steps, is_mixed in zip(curriculum_stages, stage_steps, stage_is_mixed):
+    # Track evaluation results across stages to detect catastrophic forgetting
+    stage_eval_results = []
+
+    for stage_idx, (stage_max_digits, stage_n_steps, is_mixed) in enumerate(zip(curriculum_stages, stage_steps, stage_is_mixed)):
         if is_mixed:
             print(f"--- Starting Stage: mixed (1 to {stage_max_digits} digits) for {stage_n_steps} steps ---")
         else:
@@ -1254,6 +1257,82 @@ def train(
                             gt_text = "(unknown operator)"
                         print(f"  [GT]  {gt_text!r}")
 
+        # Run mini evaluation after each stage (20 steps) to check for catastrophic forgetting
+        print(f"\n=== Stage {stage_idx + 1} Evaluation (20 samples per difficulty) ===")
+        stage_results = {}
+        # Evaluate on all difficulty levels seen so far (1-digit up to current stage)
+        for eval_digits in range(1, min(stage_max_digits, max_digits) + 1):
+            eval_cfg = GenConfig(max_digits=eval_digits, ops=ops)
+            stats = evaluate(model, tokenizer, eval_cfg, n_samples=20, device=dev, max_pos=max_pos, verbose=False)
+            overall = stats['overall']
+            overall_acc = 100.0 * overall['correct'] / max(1, overall['total'])
+            stage_results[eval_digits] = overall_acc
+            print(f"  {eval_digits}-digit: {overall['correct']}/{overall['total']} = {overall_acc:.2f}%")
+
+        stage_eval_results.append({
+            'stage': stage_idx + 1,
+            'stage_max_digits': stage_max_digits,
+            'is_mixed': is_mixed,
+            'results': stage_results
+        })
+        print()
+
+    # Display catastrophic forgetting analysis
+    print("\n=== Catastrophic Forgetting Analysis ===")
+    print("Accuracy across stages for each difficulty level:")
+    print()
+    # Header
+    header = "Difficulty |"
+    for stage_info in stage_eval_results:
+        stage_desc = f"Stage {stage_info['stage']}"
+        header += f" {stage_desc:^12} |"
+    print(header)
+    print("-" * len(header))
+
+    # Track all difficulty levels evaluated
+    all_difficulties = set()
+    for stage_info in stage_eval_results:
+        all_difficulties.update(stage_info['results'].keys())
+
+    # Print results for each difficulty level
+    for difficulty in sorted(all_difficulties):
+        row = f"{difficulty}-digit    |"
+        for stage_info in stage_eval_results:
+            if difficulty in stage_info['results']:
+                acc = stage_info['results'][difficulty]
+                row += f" {acc:>10.2f}% |"
+            else:
+                row += "      -      |"
+        print(row)
+    print()
+
+    # Detect catastrophic forgetting
+    if len(stage_eval_results) > 1:
+        print("Catastrophic forgetting warnings:")
+        found_forgetting = False
+        for difficulty in sorted(all_difficulties):
+            max_acc = -1
+            max_stage = -1
+            for stage_info in stage_eval_results:
+                if difficulty in stage_info['results']:
+                    acc = stage_info['results'][difficulty]
+                    if acc > max_acc:
+                        max_acc = acc
+                        max_stage = stage_info['stage']
+
+            # Check if final stage has significantly lower accuracy than max
+            final_stage = stage_eval_results[-1]
+            if difficulty in final_stage['results']:
+                final_acc = final_stage['results'][difficulty]
+                drop = max_acc - final_acc
+                if drop > 10.0:  # More than 10% drop
+                    print(f"  ⚠️  {difficulty}-digit: Dropped {drop:.1f}% from stage {max_stage} ({max_acc:.1f}%) to final ({final_acc:.1f}%)")
+                    found_forgetting = True
+
+        if not found_forgetting:
+            print("  ✓ No significant catastrophic forgetting detected!")
+    print("=====================================\n")
+
     # Save checkpoint
     # Derive hyperparameters from the current model to ensure consistency on reload
     model_n_embd = getattr(model.tok_emb, 'embedding_dim', n_embd)
@@ -1275,35 +1354,79 @@ def train(
     if eval_samples and eval_samples > 0:
         print("\n=== Multi-Level Evaluation ===")
         # Evaluate on each curriculum stage (1-digit, 2-digit, 3-digit, etc.)
+        final_eval_results = {}
         for eval_digits in range(1, max_digits + 1):
-            print(f"\n--- Evaluating on {eval_digits}-digit problems ({eval_samples} samples) ---")
+            print(f"Evaluating {eval_digits}-digit problems ({eval_samples} samples)...", end=" ", flush=True)
             eval_cfg = GenConfig(max_digits=eval_digits, ops=ops)
-            stats = evaluate(model, tokenizer, eval_cfg, n_samples=eval_samples, device=dev, max_pos=max_pos)
+            stats = evaluate(model, tokenizer, eval_cfg, n_samples=eval_samples, device=dev, max_pos=max_pos, verbose=False)
             overall = stats['overall']
             overall_acc = 100.0 * overall['correct'] / max(1, overall['total'])
-            print(f"Results for {eval_digits}-digit:")
+            final_eval_results[eval_digits] = overall_acc
+            print(f"{overall['correct']}/{overall['total']} = {overall_acc:.2f}%")
             for op in ops:
                 c = stats['per_op'][op]
                 acc = 100.0 * c['correct'] / max(1, c['total'])
                 print(f"  {op}: {c['correct']}/{c['total']} = {acc:.2f}%")
-            print(f"  Overall: {overall['correct']}/{overall['total']} = {overall_acc:.2f}%")
 
         # Extrapolation test: Evaluate on 4-digit problems (minimal sample size)
         extrapolation_samples = max(20, eval_samples // 10)  # Use 10% of eval_samples, minimum 20
-        print(f"\n--- Extrapolation Test: 4-digit problems ({extrapolation_samples} samples) ---")
-        print("(Testing if model can generalize beyond training difficulty)")
+        print(f"\nExtrapolation: 4-digit problems ({extrapolation_samples} samples)...", end=" ", flush=True)
         eval_cfg_4d = GenConfig(max_digits=4, ops=ops)
-        stats_4d = evaluate(model, tokenizer, eval_cfg_4d, n_samples=extrapolation_samples, device=dev, max_pos=max_pos)
+        stats_4d = evaluate(model, tokenizer, eval_cfg_4d, n_samples=extrapolation_samples, device=dev, max_pos=max_pos, verbose=False)
         overall_4d = stats_4d['overall']
         overall_acc_4d = 100.0 * overall_4d['correct'] / max(1, overall_4d['total'])
-        print(f"Results for 4-digit:")
+        print(f"{overall_4d['correct']}/{overall_4d['total']} = {overall_acc_4d:.2f}%")
         for op in ops:
             c = stats_4d['per_op'][op]
             acc = 100.0 * c['correct'] / max(1, c['total'])
             print(f"  {op}: {c['correct']}/{c['total']} = {acc:.2f}%")
-        print(f"  Overall: {overall_4d['correct']}/{overall_4d['total']} = {overall_acc_4d:.2f}%")
 
         print("\n===============================")
+
+        # Final catastrophic forgetting analysis comparing stage evals to final eval
+        if len(stage_eval_results) > 0:
+            print("\n=== Final Catastrophic Forgetting Analysis ===")
+            print("Comparing peak performance during training vs. final evaluation:")
+            print()
+            print(f"{'Difficulty':<12} | {'Peak (Training)':<20} | {'Final Eval':<15} | {'Change':<10}")
+            print("-" * 70)
+
+            found_forgetting = False
+            for difficulty in sorted(final_eval_results.keys()):
+                # Find peak accuracy during training stages for this difficulty
+                peak_acc = -1
+                peak_stage = -1
+                for stage_info in stage_eval_results:
+                    if difficulty in stage_info['results']:
+                        acc = stage_info['results'][difficulty]
+                        if acc > peak_acc:
+                            peak_acc = acc
+                            peak_stage = stage_info['stage']
+
+                final_acc = final_eval_results[difficulty]
+
+                if peak_acc >= 0:
+                    change = final_acc - peak_acc
+                    change_str = f"{change:+.1f}%"
+                    if change < -10.0:
+                        change_str += " ⚠️"
+                        found_forgetting = True
+                    elif change > 5.0:
+                        change_str += " ✓"
+
+                    print(f"{difficulty}-digit{'':<6} | Stage {peak_stage}: {peak_acc:>5.1f}%{'':<8} | {final_acc:>6.1f}%{'':<7} | {change_str}")
+                else:
+                    print(f"{difficulty}-digit{'':<6} | {'N/A':<20} | {final_acc:>6.1f}%{'':<7} | {'N/A'}")
+
+            print()
+            if found_forgetting:
+                print("⚠️  Significant performance drops detected (>10%). Consider:")
+                print("    - Increasing training steps on earlier curriculum stages")
+                print("    - Using experience replay (mixing old and new difficulty levels)")
+                print("    - Adjusting learning rate or adding learning rate decay")
+            else:
+                print("✓ Model maintained or improved performance on all difficulty levels!")
+            print("==============================================\n")
 
 
 def generate_sample_prompt(cfg: GenConfig) -> str:
@@ -1452,7 +1575,7 @@ def _extract_result_from_text(text: str) -> str:
 
 @torch.no_grad()
 def evaluate(model: TinyGPT, tokenizer: CharTokenizer, cfg: GenConfig, n_samples: int, device: torch.device,
-             max_pos: int) -> dict:
+             max_pos: int, verbose: bool = True) -> dict:
     """Run a synthetic test set and compute per-op and overall accuracy.
 
     Generates random arithmetic problems, evaluates model predictions,
@@ -1465,6 +1588,7 @@ def evaluate(model: TinyGPT, tokenizer: CharTokenizer, cfg: GenConfig, n_samples
         n_samples: Number of test samples to evaluate
         device: Device to run on
         max_pos: Maximum position for generation
+        verbose: If True, print progress during evaluation
 
     Returns:
         Dictionary with 'per_op' (per-operator stats) and 'overall' stats
@@ -1473,7 +1597,7 @@ def evaluate(model: TinyGPT, tokenizer: CharTokenizer, cfg: GenConfig, n_samples
     log_interval = max(1, n_samples // 10)  # log progress every 10%
 
     for i in range(n_samples):
-        if i % log_interval == 0 and i > 0:
+        if verbose and i % log_interval == 0 and i > 0:
             print(f"  eval sample {i}/{n_samples}")
 
         op = random.choice(cfg.ops)  # pick random operator
@@ -1528,7 +1652,7 @@ def main():
     p_train.add_argument('--ckpt', type=str, default='math_llm_scratchpad_model-007.pt',
                          help="Checkpoint file path for saving/loading model (default: math_llm_scratchpad_model-007.pt)")
     p_train.add_argument('--log-every', type=int, default=100,
-                         help="Print training progress every N steps (default: 100)")
+                         help="Print training progress every N steps (default: 500)")
     p_train.add_argument('--eval-samples', type=int, default=500,
                          help='Number of synthetic test samples for evaluation; set to 0 to skip evaluation (default: 500)')
     p_train.add_argument('--ops', type=str, default='+-*/',
