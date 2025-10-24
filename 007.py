@@ -1167,31 +1167,48 @@ def main():
     sub = parser.add_subparsers(dest='cmd', required=True)
 
     p_train = sub.add_parser('train', help='Train the tiny arithmetic LLM on synthetic data')
-    p_train.add_argument('--steps', type=int, default=5000)
+    p_train.add_argument('--steps', type=int, default=5000,
+                         help="Total number of training steps/iterations (default: 5000)")
     p_train.add_argument('--batch-size', type=int, default=128,
-                         help="Batch size. Longer sequences may need smaller batches.")
+                         help="Batch size for training. Longer sequences may need smaller batches (default: 128)")
     p_train.add_argument('--max-digits', type=int, default=3,
-                         help="*Final* max digits for curriculum (e.g., 3 means 1-digit, 2-digit, 3-digit stages)")
-    p_train.add_argument('--lr', type=float, default=3e-4)
-    p_train.add_argument('--n-embd', type=int, default=128)
-    p_train.add_argument('--n-layer', type=int, default=6, help="Number of transformer layers")
-    p_train.add_argument('--n-head', type=int, default=4)
-    p_train.add_argument('--dropout', type=float, default=0.1)
-    p_train.add_argument('--device', type=str, default='auto', choices=['cpu', 'cuda', 'mps', 'auto'])
-    p_train.add_argument('--ckpt', type=str, default='math_llm_scratchpad_model-007.pt', help="Checkpoint path")
-    p_train.add_argument('--log-every', type=int, default=100)
-    p_train.add_argument('--eval-samples', type=int, default=100, help='Number of synthetic test samples (0 to skip)')
-    p_train.add_argument('--ops', type=str, default='+-*/')
+                         help="Final max digits for curriculum training. E.g., 3 means 1-digit, 2-digit, 3-digit stages (default: 3)")
+    p_train.add_argument('--lr', type=float, default=3e-4,
+                         help="Learning rate for AdamW optimizer (default: 3e-4)")
+    p_train.add_argument('--n-embd', type=int, default=128,
+                         help="Embedding dimension size for token and position embeddings (default: 128)")
+    p_train.add_argument('--n-layer', type=int, default=6,
+                         help="Number of transformer layers/blocks (default: 6)")
+    p_train.add_argument('--n-head', type=int, default=4,
+                         help="Number of attention heads in multi-head attention (default: 4)")
+    p_train.add_argument('--dropout', type=float, default=0.1,
+                         help="Dropout probability for regularization (default: 0.1)")
+    p_train.add_argument('--device', type=str, default='auto', choices=['cpu', 'cuda', 'mps', 'auto'],
+                         help="Device to train on: cpu, cuda (NVIDIA GPU), mps (Apple Silicon), or auto (default: auto)")
+    p_train.add_argument('--ckpt', type=str, default='math_llm_scratchpad_model-007.pt',
+                         help="Checkpoint file path for saving/loading model (default: math_llm_scratchpad_model-007.pt)")
+    p_train.add_argument('--log-every', type=int, default=100,
+                         help="Print training progress every N steps (default: 100)")
+    p_train.add_argument('--eval-samples', type=int, default=100,
+                         help='Number of synthetic test samples for evaluation; set to 0 to skip evaluation (default: 100)')
+    p_train.add_argument('--ops', type=str, default='+-*/',
+                         help="String of operators to train on, e.g., '+-*/' for all four operations (default: +-*/)")
     p_train.add_argument('--op-probs', type=str, default=None,
-                         help="Comma-separated op probabilities. (No longer recommended, curriculum is better.)")
-    p_train.add_argument('--max-pos', type=int, default=512, help="Max sequence length for pos embeddings")
-    p_train.add_argument('--use-amp', action='store_true', help="Enable mixed precision training (FP16/BF16)")
+                         help="Comma-separated operator probabilities (e.g., '0.25,0.25,0.25,0.25'). Not recommended; curriculum is better (default: None)")
+    p_train.add_argument('--max-pos', type=int, default=512,
+                         help="Maximum sequence length for positional embeddings (context window size) (default: 512)")
+    p_train.add_argument('--use-amp', action='store_true',
+                         help="Enable automatic mixed precision training using FP16/BF16 for faster training (default: False)")
 
     p_demo = sub.add_parser('demo', help='Run generation on a prompt like "12+3="')
-    p_demo.add_argument('--prompt', type=str, required=True, help='Prompt such as "12+3=" or "144/12="')
-    p_demo.add_argument('--ckpt', type=str, default='math_llm_scratchpad_model.pt', help="Checkpoint path")
-    p_demo.add_argument('--device', type=str, default='auto', choices=['cpu', 'cuda', 'mps', 'auto'])
-    p_demo.add_argument('--max-new-tokens', type=int, default=512, help="Max tokens to generate (should be >= max_pos)")
+    p_demo.add_argument('--prompt', type=str, required=True,
+                        help='Arithmetic prompt to evaluate, e.g., "12+3=" or "144/12="')
+    p_demo.add_argument('--ckpt', type=str, default='math_llm_scratchpad_model.pt',
+                        help="Path to checkpoint file to load trained model from (default: math_llm_scratchpad_model.pt)")
+    p_demo.add_argument('--device', type=str, default='auto', choices=['cpu', 'cuda', 'mps', 'auto'],
+                        help="Device to run inference on: cpu, cuda (NVIDIA GPU), mps (Apple Silicon), or auto (default: auto)")
+    p_demo.add_argument('--max-new-tokens', type=int, default=512,
+                        help="Maximum number of tokens to generate in response. Should be >= model's max_pos (default: 512)")
 
     args = parser.parse_args()
 
