@@ -1262,17 +1262,33 @@ def train(
                     print(f"  [IN]  {prompt!r}")
                     print(f"  [OUT] {out!r}")
                     # Generate ground truth for the same prompt
+                    # IMPORTANT: The prompt numbers are already reversed for +, -, *
+                    # We need to UN-REVERSE them before passing to scratchpad generators
+                    # because the generators will reverse them again internally
                     m = re.match(r"^\s*(\d+)([+\-*/])(\d+)=", prompt)
                     if m:
-                        a_i, b_i, op_s = int(m.group(1)), int(m.group(3)), m.group(2)
+                        a_prompt_str, b_prompt_str, op_s = m.group(1), m.group(3), m.group(2)
+
+                        # Un-reverse the prompt numbers to get original values
+                        if op_s == '/':
+                            # Division is NOT reversed in the prompt
+                            a_orig = int(a_prompt_str)
+                            b_orig = int(b_prompt_str)
+                        else:
+                            # +, -, * ARE reversed in the prompt, so un-reverse them
+                            a_orig = int(a_prompt_str[::-1])
+                            b_orig = int(b_prompt_str[::-1])
+
+                        # Generate ground truth using original numbers
+                        # (the generators will reverse them again to match the prompt)
                         if op_s == '+':
-                            gt_text = _make_add_scratchpad(a_i, b_i, batch_max_digits).strip()
+                            gt_text = _make_add_scratchpad(a_orig, b_orig, batch_max_digits).strip()
                         elif op_s == '-':
-                            gt_text = _make_sub_scratchpad(a_i, b_i, batch_max_digits).strip()
+                            gt_text = _make_sub_scratchpad(a_orig, b_orig, batch_max_digits).strip()
                         elif op_s == '*':
-                            gt_text = _make_mul_scratchpad(a_i, b_i).strip()
+                            gt_text = _make_mul_scratchpad(a_orig, b_orig).strip()
                         elif op_s == '/':
-                            gt_text = _make_div_scratchpad(a_i, b_i).strip()
+                            gt_text = _make_div_scratchpad(a_orig, b_orig).strip()
                         else:
                             gt_text = "(unknown operator)"
                         print(f"  [GT]  {gt_text!r}")
