@@ -271,7 +271,8 @@ def _cleanup_leading_zero_steps(steps: list[str], result: int) -> list[str]:
 
 def _make_add_scratchpad(a: int, b: int, max_digits: int) -> str:
     """Generates a scratchpad for right-to-left addition with carry.
-    Example: 85+47=[C1:5+7=12;W:2;K:1;C2:8+4+1=13;W:13;F:132]
+    Example: 58+74=[C1:5+7=12;W:2;K:1;C2:8+4+1=13;W:13;F:132]
+    Note: Input operands are reversed (85 becomes 58) to align with right-to-left processing.
 
     Scratchpad format:
     - C{n}: Column n (rightmost is C1)
@@ -283,6 +284,10 @@ def _make_add_scratchpad(a: int, b: int, max_digits: int) -> str:
     # Pad to max_digits + 1 (to handle overflow/carry)
     max_len = max(len(str(a)), len(str(b))) + 1
     a_s, b_s = _pad_numbers_to_length(a, b, max_len)
+
+    # Reverse the operands for display (to match right-to-left processing)
+    a_reversed = int(str(a)[::-1]) if a > 0 else 0
+    b_reversed = int(str(b)[::-1]) if b > 0 else 0
 
     steps = []
     carry = 0
@@ -307,13 +312,14 @@ def _make_add_scratchpad(a: int, b: int, max_digits: int) -> str:
         if carry > 0:
             steps.append(f"K:{carry}")  # record carry for next step
 
-    # Format and return complete scratchpad
-    return _format_scratchpad(a, b, '+', steps, res)
+    # Format and return complete scratchpad with reversed operands
+    return _format_scratchpad(a_reversed, b_reversed, '+', steps, res)
 
 
 def _make_sub_scratchpad(a: int, b: int, max_digits: int) -> str:
     """Generates a scratchpad for right-to-left subtraction with borrow.
-    Example: 52-27=[C1:2-7;B:5->4;C1:12-7=5;W:5;C2:4-2=2;W:2;F:25]
+    Example: 25-72=[C1:2-7;B:5->4;C1:12-7=5;W:5;C2:4-2=2;W:2;F:25]
+    Note: Input operands are reversed (52 becomes 25) to align with right-to-left processing.
 
     Scratchpad format:
     - C{n}: Column n (rightmost is C1)
@@ -322,9 +328,14 @@ def _make_sub_scratchpad(a: int, b: int, max_digits: int) -> str:
     - F: Final answer
     """
     res = a - b
+
+    # Reverse the operands for display (to match right-to-left processing)
+    a_reversed = int(str(a)[::-1]) if a > 0 else 0
+    b_reversed = int(str(b)[::-1]) if b > 0 else 0
+
     # Handle negative results simply
     if res < 0:
-        return f"{a}-{b}=[F:{res}]\n"
+        return f"{a_reversed}-{b_reversed}=[F:{res}]\n"
 
     # Pad to at least max_digits or the length of the longer number
     max_len = max(len(str(a)), len(str(b)), max_digits)
@@ -370,17 +381,18 @@ def _make_sub_scratchpad(a: int, b: int, max_digits: int) -> str:
             steps.append(_record_column_operation(col_num, d1, d2, '-'))
             steps.append(f"W:{d1 - d2}")
 
-    # Format and return complete scratchpad
-    return _format_scratchpad(a, b, '-', steps, res)
+    # Format and return complete scratchpad with reversed operands
+    return _format_scratchpad(a_reversed, b_reversed, '-', steps, res)
 
 
 def _make_mul_scratchpad(a: int, b: int) -> str:
     """Generates a scratchpad for multiplication via partial products with digit-by-digit breakdown.
-    Example: 13*12=[P1:13*2;D1:3*2=6;W:6;D2:1*2=2;W:2;R1:26;P2:13*10;D1:3*1=3;W:3;D2:1*1=1;W:1;R2:130;A:26+130=156;F:156]
+    Example: 31*21=[P1:31*2;M1:3*2=6;W:6;M2:1*2=2;W:2;R1:26;P2:31*10;M1:3*1=3;W:3;M2:1*1=1;W:1;R2:130;A:26+130=156;F:156]
+    Note: Input operands are reversed (13 becomes 31) to align with right-to-left processing.
 
     Scratchpad format:
-    - P{n}: Start partial product n (e.g., P1:13*2)
-    - D{n}: Single digit multiplication step (e.g., D1:3*2=6)
+    - P{n}: Start partial product n (e.g., P1:31*2)
+    - M{n}: Single digit multiplication step (e.g., M1:3*2=6)
     - W:{d}: Write digit to result
     - K:{c}: Carry value
     - R{n}: Result of partial product (e.g., R1:26)
@@ -388,14 +400,19 @@ def _make_mul_scratchpad(a: int, b: int) -> str:
     - F: Final answer
     """
     res = a * b
+
+    # Reverse the operands for display (to match right-to-left processing)
+    a_reversed = int(str(a)[::-1]) if a > 0 else 0
+    b_reversed = int(str(b)[::-1]) if b > 0 else 0
+
     b_s = str(b)
     steps = []
     partials = []
 
     if a == 0 or b == 0:
-        steps.append(f"P1:{a}*{b}=0")
+        steps.append(f"P1:{a_reversed}*{b_reversed}=0")
         steps.append(f"F:0")
-        return f"{a}*{b}=[{';'.join(steps)}]\n"
+        return f"{a_reversed}*{b_reversed}=[{';'.join(steps)}]\n"
 
     # Process each digit of b from right to left (ones, tens, hundreds, etc.)
     for b_idx, b_digit_ch in enumerate(reversed(b_s)):
@@ -405,8 +422,8 @@ def _make_mul_scratchpad(a: int, b: int) -> str:
 
         multiplier = b_digit * (10 ** b_idx)  # place value (e.g., 2*1, 1*10)
 
-        # Start this partial product (e.g., "P1:13*2")
-        steps.append(f"P{b_idx + 1}:{a}*{multiplier}")
+        # Start this partial product (e.g., "P1:31*2") with reversed operand
+        steps.append(f"P{b_idx + 1}:{a_reversed}*{multiplier}")
 
         # Multiply a by the single digit b_digit, processing digit by digit with carries
         a_s = str(a)
@@ -450,13 +467,16 @@ def _make_mul_scratchpad(a: int, b: int) -> str:
         steps.append(f"A:{sum_str}={sum(partials)}")
 
     # Format and return complete scratchpad (no leading zero cleanup for multiplication)
+    # Use reversed operands
     steps.append(f"F:{res}")
-    return f"{a}*{b}=[{';'.join(steps)}]\n"
+    return f"{a_reversed}*{b_reversed}=[{';'.join(steps)}]\n"
 
 
 def _make_div_scratchpad(a: int, b: int) -> str:
     """
     Long division scratchpad with per-digit steps (integer division).
+    Note: Division processes LEFT-TO-RIGHT, so operands are NOT reversed.
+
     Markers used (kept within existing tokenizer letters):
     - C{n}: current chunk context; we record comparator and subtraction
             e.g., C1:1264>=538 and C1:1264-1076=188
@@ -1445,7 +1465,8 @@ def train(
 
 
 def generate_sample_prompt(cfg: GenConfig) -> str:
-    # (This function is unchanged from 005.py, but is still useful)
+    # Generate prompt with reversed operands to match training data format
+    # Exception: Division is NOT reversed (it processes left-to-right)
     op = _choose_op(cfg)
     if op == '+':
         a, b = _rand_int(cfg.max_digits), _rand_int(cfg.max_digits)
@@ -1457,7 +1478,15 @@ def generate_sample_prompt(cfg: GenConfig) -> str:
         a, b = _make_div_pair(cfg.max_digits)
     else:
         a, b = 1, 1
-    return f"{a}{op}{b}="
+
+    # Reverse operands for +, -, * (right-to-left operations)
+    # Division is left-to-right, so keep original order
+    if op == '/':
+        return f"{a}{op}{b}="
+    else:
+        a_reversed = int(str(a)[::-1]) if a > 0 else 0
+        b_reversed = int(str(b)[::-1]) if b > 0 else 0
+        return f"{a_reversed}{op}{b_reversed}="
 
 
 def load_model(ckpt_path: str, device: str = 'cpu') -> Tuple[TinyGPT, CharTokenizer, torch.device]:
