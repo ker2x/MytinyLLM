@@ -1735,8 +1735,8 @@ def main():
     # TODO: add TPU
     p_train.add_argument('--device', type=str, default='auto', choices=['cpu', 'cuda', 'mps', 'auto'],
                          help="Device to train on: cpu, cuda (NVIDIA GPU), mps (Apple Silicon), or auto (default: auto)")
-    p_train.add_argument('--ckpt', type=str, default='math_llm_scratchpad_model-009.pt',
-                         help="Checkpoint file path for saving/loading model (default: math_llm_scratchpad_model-009.pt)")
+    p_train.add_argument('--ckpt', type=str, default='math_llm_scratchpad_model-010.pt',
+                         help="Checkpoint file path for saving/loading model (default: math_llm_scratchpad_model-010.pt)")
     p_train.add_argument('--log-every', type=int, default=100,
                          help="Print training progress every N steps (default: 500)")
     p_train.add_argument('--eval-samples', type=int, default=500,
@@ -1754,8 +1754,8 @@ def main():
     p_demo = sub.add_parser('demo', help='Run generation on a prompt like "12+3="')
     p_demo.add_argument('--prompt', type=str, required=True,
                         help='Arithmetic prompt to evaluate, e.g., "12+3=" or "144/12="')
-    p_demo.add_argument('--ckpt', type=str, default='math_llm_scratchpad_model-009.pt',
-                        help="Path to checkpoint file to load trained model from (default: math_llm_scratchpad_model-009.pt)")
+    p_demo.add_argument('--ckpt', type=str, default='math_llm_scratchpad_model-010.pt',
+                        help="Path to checkpoint file to load trained model from (default: math_llm_scratchpad_model-010.pt)")
     # TODO: add TPU
     p_demo.add_argument('--device', type=str, default='auto', choices=['cpu', 'cuda', 'mps', 'auto'],
                         help="Device to run inference on: cpu, cuda (NVIDIA GPU), mps (Apple Silicon), or auto (default: auto)")
