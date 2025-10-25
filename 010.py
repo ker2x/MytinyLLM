@@ -1693,13 +1693,13 @@ def evaluate(model: TinyGPT, tokenizer: CharTokenizer, cfg: GenConfig, n_samples
     if save_outputs and outputs_to_save:
         with open(save_outputs, 'w', encoding='utf-8') as f:
             for entry in outputs_to_save:
-                f.write(f"[PROMPT] {entry['prompt']!r}\n")
+#                f.write(f"[PROMPT] {entry['prompt']!r}\n")
                 f.write(f"[OUT]    {entry['output']!r}\n")
                 f.write(f"[GT]     {entry['ground_truth']!r}\n")
-                f.write(f"[CALC]   {entry['calculation']}\n")
-                f.write(
-                    f"[PRED]   {entry['predicted']!r} (Expected: {entry['expected']!r}) - {'CORRECT' if entry['correct'] else 'WRONG'}\n")
-                f.write(f"\n" + "-" * 80 + "\n")
+#                f.write(f"[CALC]   {entry['calculation']}\n")
+#                f.write(
+#                    f"[PRED]   {entry['predicted']!r} (Expected: {entry['expected']!r}) - {'CORRECT' if entry['correct'] else 'WRONG'}\n")
+#                f.write(f"\n" + "-" * 80 + "\n")
 
     return {
         'per_op': counts,
